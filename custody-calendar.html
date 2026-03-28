@@ -1134,6 +1134,21 @@
 
             return (
                 <div className="container">
+                    <div style={{
+                        background: '#fef3c7',
+                        border: '1px solid #f59e0b',
+                        borderRadius: '0.5rem',
+                        padding: '0.75rem 1rem',
+                        marginBottom: '1rem',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '0.6rem'
+                    }}>
+                        <span style={{fontSize: '1.2rem', lineHeight: 1}}>⚠️</span>
+                        <div style={{fontSize: '0.875rem', color: '#92400e'}}>
+                            <strong>Data is not saved automatically.</strong> This is a self-contained webpage — all data lives only in your browser session and will be permanently lost if you refresh or close this tab. <strong>Export your data before refreshing.</strong>
+                        </div>
+                    </div>
                     <div className="card">
                         <h1 style={{fontSize: '1.5rem', fontWeight: 'bold', color: '#111827', marginBottom: '1.5rem'}}>
                             Custody Calendar - {children.join(' & ')}

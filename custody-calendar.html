@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custody Calendar - Fully Configurable</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1.5rem 1.5rem 8rem;
+            background-color: #f9fafb;
+            min-height: 100vh;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e7eb;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+        }
+        
+        .btn-primary {
+            background-color: #2563eb;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: #1d4ed8;
+        }
+        
+        .btn-danger {
+            background-color: #dc2626;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background-color: #b91c1c;
+        }
+        
+        .btn-success {
+            background-color: #16a34a;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background-color: #15803d;
+        }
+        
+        .btn-secondary {
+            background-color: #6b7280;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background-color: #4b5563;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            ring: 2px;
+            ring-color: #3b82f6;
+            border-color: #3b82f6;
+        }
+        
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        
+        .table th,
+        .table td {
+            padding: 0.75rem;
+            border: 1px solid #e5e7eb;
+            text-align: left;
+        }
+        
+        .table thead tr {
+            background-color: #f3f4f6;
+        }
+        
+        .table tbody tr:hover {
+            background-color: #f9fafb;
+        }
+        
+        .text-red {
+            color: #dc2626;
+        }
+        
+        .reporting-box {
+            background-color: #f9fafb;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .config-box {
+            background-color: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .grid {
+            display: grid;
+            gap: 1rem;
+        }
+        
+        .config-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .config-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background-color: white;
+            border: 1px solid #d1d5db;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+        }
+        
+        .grid-cols-1 {
+            grid-template-columns: repeat(1, minmax(0, 1fr));
+        }
+        
+        @media (min-width: 768px) {
+            .md\\:grid-cols-2 {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        
+        @media (min-width: 1024px) {
+            .lg\\:grid-cols-5 {
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+            }
+        }
+        
+        .flex {
+            display: flex;
+        }
+        
+        .flex-wrap {
+            flex-wrap: wrap;
+        }
+        
+        .gap-2 {
+            gap: 0.5rem;
+        }
+        
+        .gap-3 {
+            gap: 0.75rem;
+        }
+        
+        .gap-4 {
+            gap: 1rem;
+        }
+        
+        .mb-2 {
+            margin-bottom: 0.5rem;
+        }
+        
+        .mb-4 {
+            margin-bottom: 1rem;
+        }
+        
+        .mb-6 {
+            margin-bottom: 1.5rem;
+        }
+        
+        .mt-4 {
+            margin-top: 1rem;
+        }
+        
+        .mt-6 {
+            margin-top: 1.5rem;
+        }
+        
+        .text-sm {
+            font-size: 0.875rem;
+        }
+        
+        .text-lg {
+            font-size: 1.125rem;
+        }
+        
+        .text-2xl {
+            font-size: 1.5rem;
+        }
+        
+        .font-medium {
+            font-weight: 500;
+        }
+        
+        .font-semibold {
+            font-weight: 600;
+        }
+        
+        .font-bold {
+            font-weight: 700;
+        }
+        
+        .text-gray-600 {
+            color: #4b5563;
+        }
+        
+        .text-gray-700 {
+            color: #374151;
+        }
+        
+        .text-gray-900 {
+            color: #111827;
+        }
+        
+        .overflow-x-auto {
+            overflow-x: auto;
+        }
+        
+        .cursor-not-allowed {
+            cursor: not-allowed;
+        }
+        
+        .text-gray-400 {
+            color: #9ca3af;
+        }
+        
+        .w-5 {
+            width: 1.25rem;
+        }
+        
+        .h-5 {
+            height: 1.25rem;
+        }
+        
+        .checkbox {
+            accent-color: #3b82f6;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useRef, useEffect } = React;
+
+        // Date helper functions
+        function toDate(d) {
+            if (!d || typeof d !== 'string') return null;
+            const parsed = new Date(d + 'T00:00:00.000');
+            return isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        function daysInclusive(start, end) {
+            const startDate = toDate(start);
+            const endDate = toDate(end);
+            
+            if (!startDate || !endDate || endDate < startDate) {
+                return "";
+            }
+            
+            const diffTime = endDate.getTime() - startDate.getTime();
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays + 1;
+        }
+
+        function nightsInclusive(start, end) {
+            const days = daysInclusive(start, end);
+            if (days === "") return "";
+            return Math.max(0, days - 1);
+        }
+
+        function overlapDays(a0, a1, b0, b1) {
+            const aStart = toDate(a0);
+            const aEnd = toDate(a1);
+            const bStart = toDate(b0);
+            const bEnd = toDate(b1);
+            
+            if (!aStart || !aEnd || !bStart || !bEnd) return 0;
+            if (aEnd < aStart || bEnd < bStart) return 0;
+            
+            const overlapStart = new Date(Math.max(aStart.getTime(), bStart.getTime()));
+            const overlapEnd = new Date(Math.min(aEnd.getTime(), bEnd.getTime()));
+            
+            if (overlapStart > overlapEnd) return 0;
+            
+            const diffTime = overlapEnd.getTime() - overlapStart.getTime();
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays + 1;
+        }
+
+        function generateId() {
+            return Math.random().toString(36).substr(2, 9);
+        }
+
+        function formatDate(date) {
+            if (!date) return '';
+            const d = new Date(date);
+            return d.toISOString().split('T')[0];
+        }
+
+        const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+        function DateRangePicker({ beginDate, endDate, onChangeDates }) {
+            const [open, setOpen] = useState(false);
+            const [popPos, setPopPos] = useState({ top: 0, left: 0 });
+            const today = new Date();
+            const initYear = beginDate ? parseInt(beginDate.split('-')[0]) : today.getFullYear();
+            const initMonth = beginDate ? parseInt(beginDate.split('-')[1]) - 1 : today.getMonth();
+            const [viewYear, setViewYear] = useState(initYear);
+            const [viewMonth, setViewMonth] = useState(initMonth);
+            const [pendingStart, setPendingStart] = useState(null);
+            const [hoverDate, setHoverDate] = useState(null);
+            const btnRef = useRef(null);
+            const popRef = useRef(null);
+
+            useEffect(() => {
+                if (!open) return;
+                const handler = (e) => {
+                    const inBtn = btnRef.current && btnRef.current.contains(e.target);
+                    const inPop = popRef.current && popRef.current.contains(e.target);
+                    if (!inBtn && !inPop) {
+                        setOpen(false);
+                        setPendingStart(null);
+                        setHoverDate(null);
+                    }
+                };
+                document.addEventListener('mousedown', handler);
+                return () => document.removeEventListener('mousedown', handler);
+            }, [open]);
+
+            const handleOpen = () => {
+                if (beginDate) {
+                    setViewYear(parseInt(beginDate.split('-')[0]));
+                    setViewMonth(parseInt(beginDate.split('-')[1]) - 1);
+                }
+                const rect = btnRef.current.getBoundingClientRect();
+                const popWidth = 270;
+                const left = rect.left + popWidth > window.innerWidth
+                    ? rect.right - popWidth
+                    : rect.left;
+                setPopPos({ top: rect.bottom + 4, left });
+                setPendingStart(null);
+                setHoverDate(null);
+                setOpen(true);
+            };
+
+            const prevMonth = () => {
+                if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+                else setViewMonth(m => m - 1);
+            };
+            const nextMonth = () => {
+                if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+                else setViewMonth(m => m + 1);
+            };
+
+            const handleDayClick = (dateStr) => {
+                if (!pendingStart) {
+                    setPendingStart(dateStr);
+                    onChangeDates(dateStr, '');
+                } else {
+                    if (dateStr === pendingStart) {
+                        setPendingStart(null);
+                        onChangeDates('', '');
+                        return;
+                    }
+                    const [start, end] = dateStr < pendingStart
+                        ? [dateStr, pendingStart]
+                        : [pendingStart, dateStr];
+                    onChangeDates(start, end);
+                    setPendingStart(null);
+                    setHoverDate(null);
+                    setOpen(false);
+                }
+            };
+
+            const effectiveStart = pendingStart || beginDate;
+            const effectiveEnd = pendingStart ? hoverDate : endDate;
+            const todayStr = today.toISOString().split('T')[0];
+
+            const rangeStart = effectiveStart && effectiveEnd
+                ? (effectiveStart < effectiveEnd ? effectiveStart : effectiveEnd)
+                : effectiveStart;
+            const rangeEnd = effectiveStart && effectiveEnd
+                ? (effectiveStart < effectiveEnd ? effectiveEnd : effectiveStart)
+                : null;
+
+            const isStart = (d) => d === rangeStart;
+            const isEnd = (d) => rangeEnd && d === rangeEnd;
+            const isInRange = (d) => rangeStart && rangeEnd && d > rangeStart && d < rangeEnd;
+
+            const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+            const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
+
+            const fmt = (d) => {
+                if (!d) return '?';
+                const [y, m, day] = d.split('-');
+                return new Date(parseInt(y), parseInt(m) - 1, parseInt(day))
+                    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            };
+
+            const displayLabel = () => {
+                if (!beginDate && !endDate) return 'Select dates';
+                if (beginDate && !endDate) return `${fmt(beginDate)} → …`;
+                return `${fmt(beginDate)} – ${fmt(endDate)}`;
+            };
+
+            const popover = open && ReactDOM.createPortal(
+                <div ref={popRef} style={{
+                    position: 'fixed',
+                    zIndex: 9999,
+                    top: popPos.top,
+                    left: popPos.left,
+                    background: 'white',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '0.5rem',
+                    boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
+                    padding: '1rem',
+                    minWidth: '270px'
+                }}>
+                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem'}}>
+                                <button type="button" onClick={prevMonth} style={{background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', padding: '0 0.4rem', color: '#374151'}}>‹</button>
+                                <span style={{fontWeight: 600, fontSize: '0.95rem'}}>{MONTH_NAMES[viewMonth]} {viewYear}</span>
+                                <button type="button" onClick={nextMonth} style={{background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', padding: '0 0.4rem', color: '#374151'}}>›</button>
+                            </div>
+                            <div style={{display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '4px'}}>
+                                {DAY_NAMES.map(d => (
+                                    <div key={d} style={{textAlign: 'center', fontSize: '0.72rem', fontWeight: 600, color: '#6b7280', padding: '2px 0'}}>{d}</div>
+                                ))}
+                            </div>
+                            <div style={{display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px'}}>
+                                {Array.from({length: firstDayOfWeek}).map((_, i) => <div key={'e'+i} />)}
+                                {Array.from({length: daysInMonth}).map((_, i) => {
+                                    const day = i + 1;
+                                    const dateStr = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                                    const sel = isStart(dateStr) || isEnd(dateStr);
+                                    const inRange = isInRange(dateStr);
+                                    const isToday = dateStr === todayStr;
+                                    return (
+                                        <div
+                                            key={day}
+                                            onMouseEnter={() => pendingStart && setHoverDate(dateStr)}
+                                            onClick={() => handleDayClick(dateStr)}
+                                            style={{
+                                                textAlign: 'center',
+                                                padding: '6px 2px',
+                                                cursor: 'pointer',
+                                                fontSize: '0.85rem',
+                                                borderRadius: sel ? '50%' : (inRange ? '0' : '4px'),
+                                                background: sel ? '#2563eb' : (inRange ? '#dbeafe' : 'transparent'),
+                                                color: sel ? 'white' : (isToday && !inRange ? '#2563eb' : '#111827'),
+                                                fontWeight: sel || isToday ? 700 : 400,
+                                                userSelect: 'none'
+                                            }}
+                                        >
+                                            {day}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div style={{marginTop: '0.6rem', textAlign: 'center', fontSize: '0.78rem', color: '#6b7280', minHeight: '1.2em'}}>
+                                {pendingStart ? 'Now click the last day' : (beginDate && endDate ? '' : 'Click the first day')}
+                            </div>
+                            {beginDate && endDate && !pendingStart && (
+                                <div style={{textAlign: 'center', marginTop: '0.25rem'}}>
+                                    <button type="button" onClick={() => onChangeDates('', '')} style={{fontSize: '0.75rem', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer'}}>Clear dates</button>
+                                </div>
+                            )}
+                </div>,
+                document.body
+            );
+
+            return (
+                <div style={{display: 'inline-block', width: '100%'}}>
+                    <button
+                        ref={btnRef}
+                        type="button"
+                        onClick={handleOpen}
+                        style={{
+                            width: '100%',
+                            padding: '0.4rem 0.6rem',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '0.375rem',
+                            background: 'white',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            fontSize: '0.85rem',
+                            color: beginDate ? '#111827' : '#9ca3af',
+                            whiteSpace: 'nowrap'
+                        }}
+                    >
+                        {displayLabel()}
+                    </button>
+                    {popover}
+                </div>
+            );
+        }
+
+        function CustodyCalendarApp() {
+            // Configuration state
+            const [parents, setParents] = useState([]);
+            const [children, setChildren] = useState([]);
+            const [showConfig, setShowConfig] = useState(true);
+            const [showReporting, setShowReporting] = useState(false);
+            const [newParentName, setNewParentName] = useState('');
+            const [newChildName, setNewChildName] = useState('');
+
+            const [entries, setEntries] = useState([
+                {
+                    id: generateId(),
+                    parent: '',
+                    beginDate: '',
+                    endDate: '',
+                    childrenPresent: {},
+                    note: ''
+                }
+            ]);
+
+            const [reportingMode, setReportingMode] = useState('custom');
+            const [customStart, setCustomStart] = useState('');
+            const [customEnd, setCustomEnd] = useState('');
+            const [quarterYear, setQuarterYear] = useState(new Date().getFullYear());
+            const [quarter, setQuarter] = useState('Q1');
+            const [preset, setPreset] = useState('year-to-date');
+            const [analysisChild, setAnalysisChild] = useState('all');
+
+            const currentYear = new Date().getFullYear();
+            const today = new Date();
+            const todayStr = formatDate(today);
+
+            // Generate year options
+            const yearOptions = [];
+            for (let year = currentYear - 5; year <= currentYear + 5; year++) {
+                yearOptions.push(year);
+            }
+
+            // Configuration functions
+            const addParent = () => {
+                if (newParentName.trim() && !parents.includes(newParentName.trim())) {
+                    setParents([...parents, newParentName.trim()]);
+                    setNewParentName('');
+                }
+            };
+
+            const removeParent = (parent) => {
+                if (parents.length > 1 && window.confirm(`Remove parent "${parent}"? This cannot be undone.`)) {
+                    setParents(parents.filter(p => p !== parent));
+                }
+            };
+
+            const addChild = () => {
+                if (newChildName.trim() && !children.includes(newChildName.trim())) {
+                    const childName = newChildName.trim();
+                    setChildren([...children, childName]);
+                    
+                    // Add this child to all existing entries
+                    setEntries(entries.map(entry => ({
+                        ...entry,
+                        childrenPresent: {
+                            ...entry.childrenPresent,
+                            [childName]: true
+                        }
+                    })));
+                    
+                    setNewChildName('');
+                }
+            };
+
+            const removeChild = (child) => {
+                if (children.length > 1 && window.confirm(`Remove child "${child}"? This cannot be undone.`)) {
+                    setChildren(children.filter(c => c !== child));
+                    
+                    // Remove this child from all entries
+                    setEntries(entries.map(entry => {
+                        const newChildrenPresent = { ...entry.childrenPresent };
+                        delete newChildrenPresent[child];
+                        return {
+                            ...entry,
+                            childrenPresent: newChildrenPresent
+                        };
+                    }));
+                    
+                    // Reset analysis if it was set to the removed child
+                    if (analysisChild === child) {
+                        setAnalysisChild('all');
+                    }
+                }
+            };
+
+            // Calculate reporting window
+            const reportingWindow = useMemo(() => {
+                let start = '';
+                let end = '';
+
+                if (reportingMode === 'custom') {
+                    start = customStart;
+                    end = customEnd;
+                } else if (reportingMode === 'quarter') {
+                    const quarters = {
+                        Q1: { start: `${quarterYear}-01-01`, end: `${quarterYear}-03-31` },
+                        Q2: { start: `${quarterYear}-04-01`, end: `${quarterYear}-06-30` },
+                        Q3: { start: `${quarterYear}-07-01`, end: `${quarterYear}-09-30` },
+                        Q4: { start: `${quarterYear}-10-01`, end: `${quarterYear}-12-31` }
+                    };
+                    start = quarters[quarter].start;
+                    end = quarters[quarter].end;
+                } else if (reportingMode === 'preset') {
+                    if (preset === 'year-to-date') {
+                        start = `${currentYear}-01-01`;
+                        end = todayStr;
+                    } else if (preset === 'last-12-months') {
+                        const startDate = new Date(today);
+                        startDate.setFullYear(startDate.getFullYear() - 1);
+                        start = formatDate(startDate);
+                        end = todayStr;
+                    } else if (preset === 'calendar-year') {
+                        start = `${currentYear}-01-01`;
+                        end = `${currentYear}-12-31`;
+                    }
+                }
+
+                return { start, end };
+            }, [reportingMode, customStart, customEnd, quarterYear, quarter, preset, currentYear, todayStr]);
+
+            // Calculate summary by parent for reporting window
+            const windowSummary = useMemo(() => {
+                if (!reportingWindow.start || !reportingWindow.end) return [];
+
+                const parentSummary = {};
+                
+                entries.forEach(entry => {
+                    if (!entry.beginDate || !entry.endDate) return;
+                    
+                    const days = overlapDays(entry.beginDate, entry.endDate, reportingWindow.start, reportingWindow.end);
+                    const nights = Math.max(0, days - 1);
+                    
+                    // Count child-nights based on analysis selection
+                    let childNights = 0;
+                    if (analysisChild === 'all') {
+                        // Count nights for all children present
+                        children.forEach(child => {
+                            if (entry.childrenPresent[child]) {
+                                childNights += nights;
+                            }
+                        });
+                    } else {
+                        // Count nights only for the selected child
+                        if (entry.childrenPresent[analysisChild]) {
+                            childNights = nights;
+                        }
+                    }
+                    
+                    if (!parentSummary[entry.parent]) {
+                        parentSummary[entry.parent] = { days: 0, nights: 0 };
+                    }
+                    
+                    parentSummary[entry.parent].days += days;
+                    parentSummary[entry.parent].nights += childNights;
+                });
+
+                // Calculate nights for primary parent vs others
+                const primaryParent = parents[0];
+                if (reportingWindow.start && reportingWindow.end && primaryParent) {
+                    const windowDays = daysInclusive(reportingWindow.start, reportingWindow.end);
+                    const windowNights = windowDays !== "" ? Math.max(0, windowDays - 1) : 0;
+                    
+                    let totalPrimaryNights = parentSummary[primaryParent]?.nights || 0;
+                    
+                    // Calculate total possible nights
+                    let totalPossibleNights = 0;
+                    if (analysisChild === 'all') {
+                        totalPossibleNights = windowNights * children.length;
+                    } else {
+                        totalPossibleNights = windowNights;
+                    }
+                    
+                    // Distribute remaining nights to other parents
+                    const otherParentsNights = Math.max(0, totalPossibleNights - totalPrimaryNights);
+                    
+                    if (otherParentsNights > 0 && parents.length > 1) {
+                        const secondaryParent = parents[1];
+                        if (!parentSummary[secondaryParent]) {
+                            parentSummary[secondaryParent] = { days: 0, nights: 0 };
+                        }
+                        parentSummary[secondaryParent].nights += otherParentsNights;
+                        parentSummary[secondaryParent].days = otherParentsNights > 0 ? otherParentsNights + 1 : parentSummary[secondaryParent].days;
+                    }
+                }
+
+                const totalNights = Object.values(parentSummary).reduce((sum, p) => sum + p.nights, 0);
+                
+                return Object.entries(parentSummary).map(([parent, data]) => ({
+                    parent,
+                    days: data.days,
+                    nights: data.nights,
+                    percentage: totalNights > 0 ? ((data.nights / totalNights) * 100).toFixed(1) : '0.0'
+                }));
+            }, [entries, reportingWindow, analysisChild, children, parents]);
+
+            const totalWindowNights = windowSummary.reduce((sum, p) => sum + p.nights, 0);
+
+            // Calculate footer totals
+            const footerTotals = useMemo(() => {
+                let totalDays = 0;
+                let totalNights = 0;
+                
+                entries.forEach(entry => {
+                    const days = daysInclusive(entry.beginDate, entry.endDate);
+                    const nights = nightsInclusive(entry.beginDate, entry.endDate);
+                    
+                    if (days !== "") {
+                        totalDays += days;
+                        totalNights += nights;
+                    }
+                });
+                
+                return { totalDays, totalNights };
+            }, [entries]);
+
+            const addRow = () => {
+                const newChildrenPresent = {};
+                children.forEach(child => {
+                    newChildrenPresent[child] = true;
+                });
+                
+                setEntries([...entries, {
+                    id: generateId(),
+                    parent: parents[0] || '',
+                    beginDate: '',
+                    endDate: '',
+                    childrenPresent: newChildrenPresent,
+                    note: ''
+                }]);
+            };
+
+            const removeRow = (id) => {
+                if (entries.length > 1) {
+                    setEntries(entries.filter(entry => entry.id !== id));
+                }
+            };
+
+            const updateEntry = (id, field, value) => {
+                setEntries(entries.map(entry =>
+                    entry.id === id ? { ...entry, [field]: value } : entry
+                ));
+            };
+
+            const updateDateRange = (id, begin, end) => {
+                setEntries(entries.map(entry =>
+                    entry.id === id ? { ...entry, beginDate: begin, endDate: end } : entry
+                ));
+            };
+
+            const updateChildPresent = (id, child, value) => {
+                setEntries(entries.map(entry => {
+                    if (entry.id === id) {
+                        return {
+                            ...entry,
+                            childrenPresent: {
+                                ...entry.childrenPresent,
+                                [child]: value
+                            }
+                        };
+                    }
+                    return entry;
+                }));
+            };
+
+            const clearAll = () => {
+                if (window.confirm('Clear all entries? This cannot be undone.')) {
+                    const newChildrenPresent = {};
+                    children.forEach(child => {
+                        newChildrenPresent[child] = true;
+                    });
+                    
+                    setEntries([{
+                        id: generateId(),
+                        parent: parents[0] || '',
+                        beginDate: '',
+                        endDate: '',
+                        childrenPresent: newChildrenPresent,
+                        note: ''
+                    }]);
+                }
+            };
+
+            const exportToExcel = () => {
+                try {
+                    const wb = XLSX.utils.book_new();
+
+                    // Sheet 1: Custody Entries
+                    const entriesData = entries.map(entry => {
+                        const row = {
+                            'Parent': entry.parent,
+                            'Begin Date': entry.beginDate,
+                            'End Date': entry.endDate,
+                            'Duration (days)': daysInclusive(entry.beginDate, entry.endDate),
+                            'Duration (nights)': nightsInclusive(entry.beginDate, entry.endDate),
+                        };
+                        
+                        // Add each child as a column
+                        children.forEach(child => {
+                            row[child] = entry.childrenPresent[child] ? 'Yes' : 'No';
+                        });
+                        
+                        row['Note'] = entry.note;
+                        return row;
+                    });
+
+                    const ws1 = XLSX.utils.json_to_sheet(entriesData);
+                    const colWidths = [
+                        { wch: 14 }, // Parent
+                        { wch: 14 }, // Begin Date
+                        { wch: 14 }, // End Date
+                        { wch: 16 }, // Duration (days)
+                        { wch: 18 }, // Duration (nights)
+                    ];
+                    children.forEach(() => colWidths.push({ wch: 10 })); // Child columns
+                    colWidths.push({ wch: 30 }); // Note
+                    ws1['!cols'] = colWidths;
+                    XLSX.utils.book_append_sheet(wb, ws1, 'Custody Entries');
+
+                    // Sheet 2: Summary (Filtered)
+                    const childAnalysisText = analysisChild === 'all' ? 'All Children' : analysisChild;
+                    const summaryTitle = reportingWindow.start && reportingWindow.end 
+                        ? `Summary for ${reportingWindow.start} to ${reportingWindow.end} (${childAnalysisText})`
+                        : '(no window set)';
+
+                    const summaryData = [
+                        ['', '', '', ''],
+                        ['Parent', 'Days', 'Nights', '% Nights (of window total)'],
+                        ...windowSummary.map(item => [
+                            item.parent,
+                            item.days,
+                            item.nights,
+                            `${item.percentage}%`
+                        ])
+                    ];
+
+                    const ws2 = XLSX.utils.aoa_to_sheet(summaryData);
+                    ws2['A1'] = { v: summaryTitle };
+                    ws2['!cols'] = [
+                        { wch: 18 },
+                        { wch: 10 },
+                        { wch: 10 },
+                        { wch: 22 }
+                    ];
+                    XLSX.utils.book_append_sheet(wb, ws2, 'Summary (Filtered)');
+
+                    // Export
+                    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                    const blob = new Blob([wbout], { 
+                        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+                    });
+                    
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Custody_Calendar_${todayStr}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    console.error('Export failed:', error);
+                    alert('Export failed. Please ensure you have an internet connection.');
+                }
+            };
+
+            const exportToCSV = () => {
+                try {
+                    // Prepare entries headers (dynamic based on children)
+                    const entriesHeaders = ['Parent', 'Begin Date', 'End Date', 'Duration (days)', 'Duration (nights)', ...children, 'Note'];
+                    const entriesRows = entries.map(entry => {
+                        const row = [
+                            entry.parent,
+                            entry.beginDate,
+                            entry.endDate,
+                            daysInclusive(entry.beginDate, entry.endDate),
+                            nightsInclusive(entry.beginDate, entry.endDate),
+                        ];
+                        children.forEach(child => {
+                            row.push(entry.childrenPresent[child] ? 'Yes' : 'No');
+                        });
+                        row.push(entry.note);
+                        return row;
+                    });
+
+                    // Prepare summary data
+                    const childAnalysisText = analysisChild === 'all' ? 'All Children' : analysisChild;
+                    const summaryTitle = reportingWindow.start && reportingWindow.end 
+                        ? `Summary for ${reportingWindow.start} to ${reportingWindow.end} (${childAnalysisText})`
+                        : '(no window set)';
+
+                    const summaryHeaders = ['Parent', 'Days', 'Nights', '% Nights (of window total)'];
+                    const summaryRows = windowSummary.map(item => [
+                        item.parent,
+                        item.days,
+                        item.nights,
+                        `${item.percentage}%`
+                    ]);
+
+                    // Helper function to escape CSV fields
+                    function escapeCSVField(field) {
+                        if (field === null || field === undefined) return '';
+                        const str = String(field);
+                        if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+                            return '"' + str.replace(/"/g, '""') + '"';
+                        }
+                        return str;
+                    }
+
+                    // Convert arrays to CSV format
+                    function arrayToCSV(headers, rows) {
+                        const headerLine = headers.map(escapeCSVField).join(',');
+                        const dataLines = rows.map(row => row.map(escapeCSVField).join(','));
+                        return [headerLine, ...dataLines].join('\n');
+                    }
+
+                    // Create CSV content
+                    let csvContent = '# CUSTODY CALENDAR EXPORT\n';
+                    csvContent += `# Generated: ${new Date().toLocaleString()}\n\n`;
+                    
+                    csvContent += '# CUSTODY ENTRIES\n';
+                    csvContent += arrayToCSV(entriesHeaders, entriesRows);
+                    
+                    csvContent += '\n\n# SUMMARY REPORT\n';
+                    csvContent += `# ${summaryTitle}\n`;
+                    if (summaryRows.length > 0) {
+                        csvContent += arrayToCSV(summaryHeaders, summaryRows);
+                    } else {
+                        csvContent += 'No data for selected window\n';
+                    }
+
+                    // Create and download file
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Custody_Calendar_${todayStr}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    console.error('CSV Export failed:', error);
+                    alert('CSV Export failed.');
+                }
+            };
+
+            const importFromExcel = async (file) => {
+                try {
+                    const data = await file.arrayBuffer();
+                    const workbook = XLSX.read(data);
+                    
+                    const sheetName = workbook.SheetNames.find(name => 
+                        name.toLowerCase().includes('custody') || 
+                        name.toLowerCase().includes('entries') ||
+                        name === workbook.SheetNames[0]
+                    );
+                    
+                    if (!sheetName) {
+                        throw new Error('No suitable sheet found in the Excel file');
+                    }
+
+                    const worksheet = workbook.Sheets[sheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+                    if (jsonData.length === 0) {
+                        throw new Error('No data found in the Excel sheet');
+                    }
+
+                    // Detect children from column headers
+                    const firstRow = jsonData[0];
+                    const detectedChildren = [];
+                    Object.keys(firstRow).forEach(key => {
+                        if (!['Parent', 'Begin Date', 'End Date', 'Duration (days)', 'Duration (nights)', 'Note', 'Notes'].includes(key) &&
+                            key.trim() !== '') {
+                            detectedChildren.push(key);
+                        }
+                    });
+
+                    // Map the Excel data to our entry format
+                    const importedEntries = jsonData.map((row) => {
+                        const getColumnValue = (row, possibleNames) => {
+                            for (const name of possibleNames) {
+                                if (row[name] !== undefined && row[name] !== null && row[name] !== '') {
+                                    return row[name];
+                                }
+                            }
+                            return '';
+                        };
+
+                        const parent = getColumnValue(row, ['Parent', 'parent']);
+                        const beginDate = getColumnValue(row, ['Begin Date', 'Begin', 'Start Date', 'Start']);
+                        const endDate = getColumnValue(row, ['End Date', 'End']);
+                        const note = getColumnValue(row, ['Note', 'Notes', 'note', 'notes']) || '';
+                        
+                        // Build childrenPresent object
+                        const childrenPresent = {};
+                        detectedChildren.forEach(child => {
+                            const value = row[child];
+                            childrenPresent[child] = value === 'Yes' || value === 'yes' || value === true || value === 1;
+                        });
+
+                        const formatExcelDate = (dateValue) => {
+                            if (!dateValue) return '';
+                            
+                            if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+                                return dateValue;
+                            }
+                            
+                            if (typeof dateValue === 'number') {
+                                const excelDate = XLSX.SSF.parse_date_code(dateValue);
+                                if (excelDate) {
+                                    const year = excelDate.y;
+                                    const month = String(excelDate.m).padStart(2, '0');
+                                    const day = String(excelDate.d).padStart(2, '0');
+                                    return `${year}-${month}-${day}`;
+                                }
+                            }
+                            
+                            try {
+                                const date = new Date(dateValue);
+                                if (!isNaN(date.getTime())) {
+                                    return formatDate(date);
+                                }
+                            } catch (e) {
+                                console.warn('Could not parse date:', dateValue);
+                            }
+                            
+                            return '';
+                        };
+
+                        return {
+                            id: generateId(),
+                            parent: String(parent || (parents[0] || '')),
+                            beginDate: formatExcelDate(beginDate),
+                            endDate: formatExcelDate(endDate),
+                            childrenPresent: childrenPresent,
+                            note: String(note)
+                        };
+                    }).filter(entry => 
+                        entry.parent && (entry.beginDate || entry.endDate)
+                    );
+
+                    if (importedEntries.length === 0) {
+                        throw new Error('No valid entries found in the Excel file');
+                    }
+
+                    // Update children list if new ones detected
+                    const newChildren = detectedChildren.filter(c => !children.includes(c));
+                    if (newChildren.length > 0) {
+                        const addNewChildren = window.confirm(
+                            `Found ${newChildren.length} new children in the file: ${newChildren.join(', ')}\n\n` +
+                            'Add these children to your calendar?'
+                        );
+                        if (addNewChildren) {
+                            setChildren([...children, ...newChildren]);
+                        }
+                    }
+
+                    // Ask user if they want to replace or append
+                    const replace = window.confirm(
+                        `Found ${importedEntries.length} entries in the Excel file.\n\n` +
+                        'Click "OK" to REPLACE all current entries.\n' +
+                        'Click "Cancel" to ADD to current entries.'
+                    );
+
+                    if (replace) {
+                        setEntries(importedEntries);
+                    } else {
+                        setEntries([...entries, ...importedEntries]);
+                    }
+
+                    alert(`Successfully imported ${importedEntries.length} entries!`);
+
+                } catch (error) {
+                    console.error('Import failed:', error);
+                    alert(`Import failed: ${error.message}`);
+                }
+            };
+
+            const handleFileImport = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    importFromExcel(file);
+                }
+                event.target.value = '';
+            };
+
+            return (
+                <div className="container">
+                    <div className="card">
+                        <h1 style={{fontSize: '1.5rem', fontWeight: 'bold', color: '#111827', marginBottom: '1.5rem'}}>
+                            Custody Calendar - {children.join(' & ')}
+                        </h1>
+                        
+                        {/* Configuration Section */}
+                        <div className="config-box mb-6">
+                            <div className="flex" style={{justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
+                                <div>
+                                    <h3 className="text-lg font-semibold">Configuration</h3>
+                                    {!showConfig && (parents.length === 0 || children.length === 0) && (
+                                        <p style={{fontSize: '0.8rem', color: '#b45309', marginTop: '0.2rem'}}>
+                                            ⚠ Add parents and children here before entering dates.
+                                        </p>
+                                    )}
+                                    {showConfig && (
+                                        <p style={{fontSize: '0.8rem', color: '#6b7280', marginTop: '0.2rem'}}>
+                                            Set up parents and children first, then enter custody dates below.
+                                        </p>
+                                    )}
+                                </div>
+                                <button
+                                    onClick={() => setShowConfig(!showConfig)}
+                                    className="btn btn-sm btn-secondary"
+                                >
+                                    {showConfig ? 'Hide' : 'Show'} Settings
+                                </button>
+                            </div>
+                            
+                            {showConfig && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {/* Parents Configuration */}
+                                    <div>
+                                        <h4 className="font-medium text-gray-900 mb-2">Parents</h4>
+                                        <div className="config-list mb-2">
+                                            {parents.map((parent, index) => (
+                                                <div key={parent} className="config-item">
+                                                    <span>{parent} {index === 0 ? '(Primary)' : ''}</span>
+                                                    <button
+                                                        onClick={() => removeParent(parent)}
+                                                        disabled={parents.length === 1}
+                                                        className="text-red"
+                                                        style={{
+                                                            background: 'none',
+                                                            border: 'none',
+                                                            cursor: parents.length === 1 ? 'not-allowed' : 'pointer',
+                                                            padding: '0 0.25rem',
+                                                            fontSize: '1.25rem'
+                                                        }}
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={newParentName}
+                                                onChange={(e) => setNewParentName(e.target.value)}
+                                                onKeyPress={(e) => e.key === 'Enter' && addParent()}
+                                                placeholder="New parent name"
+                                                className="form-input"
+                                            />
+                                            <button onClick={addParent} className="btn btn-sm btn-primary">
+                                                Add
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Children Configuration */}
+                                    <div>
+                                        <h4 className="font-medium text-gray-900 mb-2">Children</h4>
+                                        <div className="config-list mb-2">
+                                            {children.map(child => (
+                                                <div key={child} className="config-item">
+                                                    <span>{child}</span>
+                                                    <button
+                                                        onClick={() => removeChild(child)}
+                                                        disabled={children.length === 1}
+                                                        className="text-red"
+                                                        style={{
+                                                            background: 'none',
+                                                            border: 'none',
+                                                            cursor: children.length === 1 ? 'not-allowed' : 'pointer',
+                                                            padding: '0 0.25rem',
+                                                            fontSize: '1.25rem'
+                                                        }}
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={newChildName}
+                                                onChange={(e) => setNewChildName(e.target.value)}
+                                                onKeyPress={(e) => e.key === 'Enter' && addChild()}
+                                                placeholder="New child name"
+                                                className="form-input"
+                                            />
+                                            <button onClick={addChild} className="btn btn-sm btn-primary">
+                                                Add
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* Header Actions */}
+                        <div className="flex flex-wrap gap-3 mb-6">
+                            <button onClick={addRow} className="btn btn-primary">+ Row</button>
+                            <button onClick={clearAll} className="btn btn-danger">Clear</button>
+                            <button onClick={exportToExcel} className="btn btn-success">Export to Excel</button>
+                            <button onClick={exportToCSV} className="btn btn-success">Export to CSV</button>
+                            <div className="flex items-center">
+                                <input
+                                    type="file"
+                                    accept=".xlsx,.xls"
+                                    onChange={handleFileImport}
+                                    style={{display: 'none'}}
+                                    id="excel-import"
+                                />
+                                <label htmlFor="excel-import" className="btn btn-primary" style={{margin: 0, cursor: 'pointer'}}>
+                                    Import from Excel
+                                </label>
+                            </div>
+                        </div>
+
+                        {/* Reporting Window */}
+                        <div className="reporting-box">
+                            <div className="flex" style={{justifyContent: 'space-between', alignItems: 'center', marginBottom: showReporting ? '1rem' : 0}}>
+                                <h3 className="text-lg font-semibold">Reporting Window & Analysis</h3>
+                                <button onClick={() => setShowReporting(!showReporting)} className="btn btn-sm btn-secondary">
+                                    {showReporting ? 'Hide' : 'Show'}
+                                </button>
+                            </div>
+                            {showReporting && <>
+                            
+                            <div className="flex flex-wrap gap-4 mb-4">
+                                <label className="flex" style={{alignItems: 'center'}}>
+                                    <input
+                                        type="radio"
+                                        value="custom"
+                                        checked={reportingMode === 'custom'}
+                                        onChange={(e) => setReportingMode(e.target.value)}
+                                        style={{marginRight: '0.5rem'}}
+                                    />
+                                    Custom Range
+                                </label>
+                                <label className="flex" style={{alignItems: 'center'}}>
+                                    <input
+                                        type="radio"
+                                        value="quarter"
+                                        checked={reportingMode === 'quarter'}
+                                        onChange={(e) => setReportingMode(e.target.value)}
+                                        style={{marginRight: '0.5rem'}}
+                                    />
+                                    Quarter
+                                </label>
+                                <label className="flex" style={{alignItems: 'center'}}>
+                                    <input
+                                        type="radio"
+                                        value="preset"
+                                        checked={reportingMode === 'preset'}
+                                        onChange={(e) => setReportingMode(e.target.value)}
+                                        style={{marginRight: '0.5rem'}}
+                                    />
+                                    Preset
+                                </label>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+                                {reportingMode === 'custom' && (
+                                    <>
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display: 'block'}}>Start Date</label>
+                                            <input
+                                                type="date"
+                                                value={customStart}
+                                                onChange={(e) => setCustomStart(e.target.value)}
+                                                className="form-input"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display: 'block'}}>End Date</label>
+                                            <input
+                                                type="date"
+                                                value={customEnd}
+                                                onChange={(e) => setCustomEnd(e.target.value)}
+                                                className="form-input"
+                                            />
+                                        </div>
+                                    </>
+                                )}
+
+                                {reportingMode === 'quarter' && (
+                                    <>
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display: 'block'}}>Year</label>
+                                            <select
+                                                value={quarterYear}
+                                                onChange={(e) => setQuarterYear(parseInt(e.target.value))}
+                                                className="form-input"
+                                            >
+                                                {yearOptions.map(year => (
+                                                    <option key={year} value={year}>{year}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display: 'block'}}>Quarter</label>
+                                            <select
+                                                value={quarter}
+                                                onChange={(e) => setQuarter(e.target.value)}
+                                                className="form-input"
+                                            >
+                                                <option value="Q1">Q1 (Jan–Mar)</option>
+                                                <option value="Q2">Q2 (Apr–Jun)</option>
+                                                <option value="Q3">Q3 (Jul–Sep)</option>
+                                                <option value="Q4">Q4 (Oct–Dec)</option>
+                                            </select>
+                                        </div>
+                                    </>
+                                )}
+
+                                {reportingMode === 'preset' && (
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-2" style={{display: 'block'}}>Preset</label>
+                                        <select
+                                            value={preset}
+                                            onChange={(e) => setPreset(e.target.value)}
+                                            className="form-input"
+                                        >
+                                            <option value="year-to-date">Year-to-Date</option>
+                                            <option value="last-12-months">Last 12 Months</option>
+                                            <option value="calendar-year">Calendar Year (current year)</option>
+                                        </select>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-2" style={{display: 'block'}}>Analysis</label>
+                                    <select
+                                        value={analysisChild}
+                                        onChange={(e) => setAnalysisChild(e.target.value)}
+                                        className="form-input"
+                                    >
+                                        <option value="all">All Children</option>
+                                        {children.map(child => (
+                                            <option key={child} value={child}>{child} Only</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="text-sm text-gray-600 mb-2">
+                                <strong>Window:</strong> {reportingWindow.start || 'Not set'} to {reportingWindow.end || 'Not set'}
+                            </div>
+                            <div className="text-sm text-gray-600 mb-2">
+                                <strong>Analysis:</strong> {analysisChild === 'all' ? 'All Children' : `${analysisChild} Only`}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                                <strong>Total nights in window:</strong> {totalWindowNights}
+                            </div>
+
+                            {/* Summary by Parent */}
+                            {windowSummary.length > 0 && (
+                                <div className="mt-4">
+                                    <h4 className="font-medium text-gray-900 mb-2">Summary by Parent</h4>
+                                    <div className="overflow-x-auto">
+                                        <table className="table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Parent</th>
+                                                    <th>Days</th>
+                                                    <th>Nights</th>
+                                                    <th>% Nights</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {windowSummary.map((item, index) => (
+                                                    <tr key={index}>
+                                                        <td>{item.parent}</td>
+                                                        <td>{item.days}</td>
+                                                        <td>{item.nights}</td>
+                                                        <td>{item.percentage}%</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                            </>}
+                        </div>
+
+                        {/* Entry Grid */}
+                        <div className="overflow-x-auto">
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Parent</th>
+                                        <th>Date Range</th>
+                                        <th>Days</th>
+                                        <th>Nights</th>
+                                        {children.map(child => (
+                                            <th key={child}>{child}</th>
+                                        ))}
+                                        <th>Note</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {entries.map((entry) => {
+                                        const days = daysInclusive(entry.beginDate, entry.endDate);
+                                        const nights = nightsInclusive(entry.beginDate, entry.endDate);
+                                        const isInvalid = entry.beginDate && entry.endDate && days === "";
+
+                                        return (
+                                            <tr key={entry.id}>
+                                                <td>
+                                                    <input
+                                                        type="text"
+                                                        list="parents"
+                                                        value={entry.parent}
+                                                        onChange={(e) => updateEntry(entry.id, 'parent', e.target.value)}
+                                                        className="form-input"
+                                                    />
+                                                    <datalist id="parents">
+                                                        {parents.map(parent => (
+                                                            <option key={parent} value={parent} />
+                                                        ))}
+                                                    </datalist>
+                                                </td>
+                                                <td style={{minWidth: '180px'}}>
+                                                    <DateRangePicker
+                                                        beginDate={entry.beginDate}
+                                                        endDate={entry.endDate}
+                                                        onChangeDates={(begin, end) => updateDateRange(entry.id, begin, end)}
+                                                    />
+                                                </td>
+                                                <td className={isInvalid ? 'text-red' : ''}>
+                                                    {days}
+                                                </td>
+                                                <td className={isInvalid ? 'text-red' : ''}>
+                                                    {nights}
+                                                </td>
+                                                {children.map(child => (
+                                                    <td key={child}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={entry.childrenPresent[child] || false}
+                                                            onChange={(e) => updateChildPresent(entry.id, child, e.target.checked)}
+                                                            className="w-5 h-5 checkbox"
+                                                        />
+                                                    </td>
+                                                ))}
+                                                <td>
+                                                    <input
+                                                        type="text"
+                                                        value={entry.note}
+                                                        onChange={(e) => updateEntry(entry.id, 'note', e.target.value)}
+                                                        className="form-input"
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <button
+                                                        onClick={() => removeRow(entry.id)}
+                                                        disabled={entries.length === 1}
+                                                        className={entries.length === 1 ? 'text-gray-400 cursor-not-allowed' : 'text-red'}
+                                                        style={{
+                                                            padding: '0.25rem 0.5rem',
+                                                            border: 'none',
+                                                            background: 'none',
+                                                            cursor: entries.length === 1 ? 'not-allowed' : 'pointer',
+                                                            fontSize: '1.2rem'
+                                                        }}
+                                                        title="Delete row"
+                                                    >
+                                                        🗑️
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* Footer Totals */}
+                        <div className="mt-6" style={{padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '0.5rem'}}>
+                            <div className="flex" style={{justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem'}}>
+                                <span className="font-semibold">Total Days: {footerTotals.totalDays}</span>
+                                <span className="font-semibold">Total Nights: {footerTotals.totalNights}</span>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<CustodyCalendarApp />);
+    </script>
+</body>
+</html>

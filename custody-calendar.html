@@ -344,6 +344,78 @@
         const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
         const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
+        // ── schedule generators ───────────────────────────────────────────────
+
+        function generateEOWSchedule(secondaryParent, startDateStr, endDateStr, childrenList, weekendStartDay) {
+            const entries = [];
+            const start = new Date(startDateStr + 'T00:00:00.000');
+            const end = new Date(endDateStr + 'T00:00:00.000');
+            const targetDay = weekendStartDay === 'fri' ? 5 : 6;
+
+            let current = new Date(start);
+            while (current.getDay() !== targetDay) current.setDate(current.getDate() + 1);
+
+            let weekendNum = 0;
+            while (current <= end) {
+                if (weekendNum % 2 === 0) {
+                    const wStart = new Date(current);
+                    const wEnd = new Date(current);
+                    while (wEnd.getDay() !== 0) wEnd.setDate(wEnd.getDate() + 1);
+                    const actualStart = wStart < start ? new Date(start) : wStart;
+                    const actualEnd = wEnd > end ? new Date(end) : wEnd;
+                    if (actualStart <= actualEnd) {
+                        const cp = {};
+                        childrenList.forEach(c => { cp[c] = true; });
+                        entries.push({
+                            id: generateId(),
+                            parent: secondaryParent,
+                            beginDate: actualStart.toISOString().split('T')[0],
+                            endDate: actualEnd.toISOString().split('T')[0],
+                            childrenPresent: cp,
+                            note: 'EOW'
+                        });
+                    }
+                }
+                current.setDate(current.getDate() + 7);
+                weekendNum++;
+            }
+            return entries;
+        }
+
+        function generateJointWeeklySchedule(parent1, parent2, startDateStr, endDateStr, childrenList) {
+            const entries = [];
+            const start = new Date(startDateStr + 'T00:00:00.000');
+            const end = new Date(endDateStr + 'T00:00:00.000');
+
+            let current = new Date(start);
+            while (current.getDay() !== 1) current.setDate(current.getDate() + 1);
+
+            let weekNum = 0;
+            while (current <= end) {
+                const wStart = new Date(current);
+                const wEnd = new Date(current);
+                wEnd.setDate(wEnd.getDate() + 6);
+                const parent = weekNum % 2 === 0 ? parent1 : parent2;
+                const actualStart = wStart < start ? new Date(start) : wStart;
+                const actualEnd = wEnd > end ? new Date(end) : wEnd;
+                if (actualStart <= actualEnd) {
+                    const cp = {};
+                    childrenList.forEach(c => { cp[c] = true; });
+                    entries.push({
+                        id: generateId(),
+                        parent,
+                        beginDate: actualStart.toISOString().split('T')[0],
+                        endDate: actualEnd.toISOString().split('T')[0],
+                        childrenPresent: cp,
+                        note: `Week ${weekNum + 1}`
+                    });
+                }
+                current.setDate(current.getDate() + 7);
+                weekNum++;
+            }
+            return entries;
+        }
+
         function DateRangePicker({ beginDate, endDate, onChangeDates }) {
             const [open, setOpen] = useState(false);
             const [popPos, setPopPos] = useState({ top: 0, left: 0 });
@@ -567,6 +639,16 @@
             const [preset, setPreset] = useState('year-to-date');
             const [analysisChild, setAnalysisChild] = useState('all');
 
+            // Schedule generator state
+            const [showScheduleGen, setShowScheduleGen] = useState(false);
+            const [schedulePattern, setSchedulePattern] = useState('eow');
+            const [scheduleStart, setScheduleStart] = useState('');
+            const [scheduleEnd, setScheduleEnd] = useState('');
+            const [scheduleSecondaryParent, setScheduleSecondaryParent] = useState('');
+            const [scheduleJointParent1, setScheduleJointParent1] = useState('');
+            const [scheduleJointParent2, setScheduleJointParent2] = useState('');
+            const [scheduleEOWDay, setScheduleEOWDay] = useState('fri');
+
             const currentYear = new Date().getFullYear();
             const today = new Date();
             const todayStr = formatDate(today);
@@ -701,32 +783,28 @@
                     parentSummary[entry.parent].nights += childNights;
                 });
 
-                // Calculate nights for primary parent vs others
+                // Primary parent gets all nights not explicitly covered by other entries.
+                // You only need to enter entries for non-primary custody periods;
+                // the primary parent's share is inferred as the remainder.
                 const primaryParent = parents[0];
                 if (reportingWindow.start && reportingWindow.end && primaryParent) {
                     const windowDays = daysInclusive(reportingWindow.start, reportingWindow.end);
                     const windowNights = windowDays !== "" ? Math.max(0, windowDays - 1) : 0;
-                    
-                    let totalPrimaryNights = parentSummary[primaryParent]?.nights || 0;
-                    
-                    // Calculate total possible nights
-                    let totalPossibleNights = 0;
-                    if (analysisChild === 'all') {
-                        totalPossibleNights = windowNights * children.length;
-                    } else {
-                        totalPossibleNights = windowNights;
-                    }
-                    
-                    // Distribute remaining nights to other parents
-                    const otherParentsNights = Math.max(0, totalPossibleNights - totalPrimaryNights);
-                    
-                    if (otherParentsNights > 0 && parents.length > 1) {
-                        const secondaryParent = parents[1];
-                        if (!parentSummary[secondaryParent]) {
-                            parentSummary[secondaryParent] = { days: 0, nights: 0 };
+                    const totalPossibleNights = analysisChild === 'all'
+                        ? windowNights * children.length
+                        : windowNights;
+
+                    // Sum ALL explicitly entered nights across all parents
+                    const totalExplicitNights = Object.values(parentSummary).reduce((s, d) => s + d.nights, 0);
+
+                    // Gap nights default to primary
+                    const gapNights = Math.max(0, totalPossibleNights - totalExplicitNights);
+                    if (gapNights > 0) {
+                        if (!parentSummary[primaryParent]) {
+                            parentSummary[primaryParent] = { days: 0, nights: 0 };
                         }
-                        parentSummary[secondaryParent].nights += otherParentsNights;
-                        parentSummary[secondaryParent].days = otherParentsNights > 0 ? otherParentsNights + 1 : parentSummary[secondaryParent].days;
+                        parentSummary[primaryParent].nights += gapNights;
+                        parentSummary[primaryParent].days += gapNights;
                     }
                 }
 
@@ -825,6 +903,30 @@
                         note: ''
                     }]);
                 }
+            };
+
+            const runScheduleGenerator = () => {
+                let newEntries = [];
+                if (schedulePattern === 'eow') {
+                    if (!scheduleSecondaryParent || !scheduleStart || !scheduleEnd) {
+                        alert('Please select a parent and set a date range.');
+                        return;
+                    }
+                    newEntries = generateEOWSchedule(scheduleSecondaryParent, scheduleStart, scheduleEnd, children, scheduleEOWDay);
+                } else {
+                    if (!scheduleJointParent1 || !scheduleJointParent2 || !scheduleStart || !scheduleEnd) {
+                        alert('Please select both parents and set a date range.');
+                        return;
+                    }
+                    newEntries = generateJointWeeklySchedule(scheduleJointParent1, scheduleJointParent2, scheduleStart, scheduleEnd, children);
+                }
+                if (newEntries.length === 0) {
+                    alert('No entries generated. Check your date range.');
+                    return;
+                }
+                const replace = window.confirm(`Generated ${newEntries.length} entries.\n\nOK = Replace all existing entries\nCancel = Add to existing entries`);
+                setEntries(replace ? newEntries : [...entries, ...newEntries]);
+                setShowScheduleGen(false);
             };
 
             const exportToExcel = () => {
@@ -1264,6 +1366,7 @@
                         {/* Header Actions */}
                         <div className="flex flex-wrap gap-3 mb-6">
                             <button onClick={addRow} className="btn btn-primary">+ Row</button>
+                            <button onClick={() => setShowScheduleGen(!showScheduleGen)} className="btn btn-primary">⚡ Generate Schedule</button>
                             <button onClick={clearAll} className="btn btn-danger">Clear</button>
                             <button onClick={exportToExcel} className="btn btn-success">Export to Excel</button>
                             <button onClick={exportToCSV} className="btn btn-success">Export to CSV</button>
@@ -1280,6 +1383,85 @@
                                 </label>
                             </div>
                         </div>
+
+                        {/* Schedule Generator */}
+                        {showScheduleGen && (
+                            <div className="config-box mb-6">
+                                <h3 className="text-lg font-semibold mb-4">Generate Schedule</h3>
+
+                                {/* Pattern */}
+                                <div className="mb-4">
+                                    <label className="font-medium text-gray-700 mb-2" style={{display:'block'}}>Custody Pattern</label>
+                                    <div className="flex gap-4">
+                                        <label className="flex" style={{alignItems:'center',gap:'0.4rem',cursor:'pointer'}}>
+                                            <input type="radio" value="eow" checked={schedulePattern==='eow'} onChange={e=>setSchedulePattern(e.target.value)} />
+                                            Primary + Every Other Weekend
+                                        </label>
+                                        <label className="flex" style={{alignItems:'center',gap:'0.4rem',cursor:'pointer'}}>
+                                            <input type="radio" value="joint-weekly" checked={schedulePattern==='joint-weekly'} onChange={e=>setSchedulePattern(e.target.value)} />
+                                            Joint / Alternating Weekly
+                                        </label>
+                                    </div>
+                                </div>
+
+                                {/* Date range */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Start Date</label>
+                                        <input type="date" value={scheduleStart} onChange={e=>setScheduleStart(e.target.value)} className="form-input" />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>End Date</label>
+                                        <input type="date" value={scheduleEnd} onChange={e=>setScheduleEnd(e.target.value)} className="form-input" />
+                                    </div>
+                                </div>
+
+                                {/* EOW options */}
+                                {schedulePattern === 'eow' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Non-Primary Parent (gets EOW)</label>
+                                            <select value={scheduleSecondaryParent} onChange={e=>setScheduleSecondaryParent(e.target.value)} className="form-input">
+                                                <option value="">Select parent…</option>
+                                                {parents.map(p => <option key={p} value={p}>{p}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Weekend Starts On</label>
+                                            <select value={scheduleEOWDay} onChange={e=>setScheduleEOWDay(e.target.value)} className="form-input">
+                                                <option value="fri">Friday</option>
+                                                <option value="sat">Saturday</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Joint weekly options */}
+                                {schedulePattern === 'joint-weekly' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Parent with Week 1</label>
+                                            <select value={scheduleJointParent1} onChange={e=>setScheduleJointParent1(e.target.value)} className="form-input">
+                                                <option value="">Select parent…</option>
+                                                {parents.map(p => <option key={p} value={p}>{p}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Parent with Week 2</label>
+                                            <select value={scheduleJointParent2} onChange={e=>setScheduleJointParent2(e.target.value)} className="form-input">
+                                                <option value="">Select parent…</option>
+                                                {parents.map(p => <option key={p} value={p}>{p}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="flex gap-3">
+                                    <button onClick={runScheduleGenerator} className="btn btn-success">Generate Entries</button>
+                                    <button onClick={() => setShowScheduleGen(false)} className="btn btn-secondary">Cancel</button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Reporting Window */}
                         <div className="reporting-box">

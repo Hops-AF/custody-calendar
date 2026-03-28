@@ -1480,6 +1480,7 @@
                                                         value={entry.parent}
                                                         onChange={(e) => updateEntry(entry.id, 'parent', e.target.value)}
                                                         className="form-input"
+                                                        autoComplete="off"
                                                     />
                                                     <datalist id="parents">
                                                         {parents.map(parent => (

@@ -344,6 +344,190 @@
         const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
         const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
+        // Local-time-safe date helpers (avoid UTC shift from toISOString)
+        function pad2(n) { return String(n).padStart(2, '0'); }
+
+        function localTodayStr() {
+            const d = new Date();
+            return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+        }
+
+        function addDaysStr(dateStr, n) {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            const dt = new Date(y, m - 1, d);
+            dt.setDate(dt.getDate() + n);
+            return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+        }
+
+        // Who has the child the night of `dateStr`? An entry [begin,end] covers the
+        // nights begin .. end-1 (handoff happens on the end day). Nights not covered
+        // by any explicit entry default to the primary parent.
+        function getNightOwner(dateStr, entries, primaryParent) {
+            const owners = [];
+            for (const e of entries) {
+                if (!e.beginDate || !e.endDate || !e.parent) continue;
+                if (dateStr >= e.beginDate && dateStr < e.endDate) owners.push(e.parent);
+            }
+            const distinct = [...new Set(owners)];
+            if (distinct.length === 0) return { parent: primaryParent || null, conflict: false, explicit: false };
+            if (distinct.length === 1) return { parent: distinct[0], conflict: false, explicit: true };
+            return { parent: distinct[0], conflict: true, explicit: true };
+        }
+
+        const PARENT_PALETTE = [
+            { bg: '#dbeafe', fg: '#1d4ed8', solid: '#2563eb' }, // blue
+            { bg: '#dcfce7', fg: '#15803d', solid: '#16a34a' }, // green
+            { bg: '#fef3c7', fg: '#b45309', solid: '#d97706' }, // amber
+            { bg: '#ede9fe', fg: '#6d28d9', solid: '#7c3aed' }, // purple
+            { bg: '#fce7f3', fg: '#be185d', solid: '#db2777' }, // pink
+            { bg: '#ccfbf1', fg: '#0f766e', solid: '#0d9488' }, // teal
+        ];
+
+        function CalendarView({ entries, parents, onAddEntry }) {
+            const now = new Date();
+            const [viewYear, setViewYear] = useState(now.getFullYear());
+            const [viewMonth, setViewMonth] = useState(now.getMonth());
+            const [selectedDay, setSelectedDay] = useState(null);
+
+            const primary = parents[0] || null;
+            const todayStr = localTodayStr();
+            const colorFor = (parent) => {
+                const idx = parents.indexOf(parent);
+                return idx >= 0 ? PARENT_PALETTE[idx % PARENT_PALETTE.length] : null;
+            };
+
+            const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+            const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+
+            const prevMonth = () => {
+                setSelectedDay(null);
+                if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+                else setViewMonth(m => m - 1);
+            };
+            const nextMonth = () => {
+                setSelectedDay(null);
+                if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+                else setViewMonth(m => m + 1);
+            };
+
+            const monthTally = {};
+            let hasConflict = false;
+            for (let day = 1; day <= daysInMonth; day++) {
+                const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
+                const owner = getNightOwner(ds, entries, primary);
+                if (owner.conflict) hasConflict = true;
+                if (owner.parent) monthTally[owner.parent] = (monthTally[owner.parent] || 0) + 1;
+            }
+
+            const selectedOwner = selectedDay ? getNightOwner(selectedDay, entries, primary) : null;
+            const selectedEntries = selectedDay
+                ? entries.filter(e => e.beginDate && e.endDate && selectedDay >= e.beginDate && selectedDay < e.endDate)
+                : [];
+
+            const fmtLong = (ds) => {
+                const [y, m, d] = ds.split('-');
+                return new Date(parseInt(y), parseInt(m) - 1, parseInt(d))
+                    .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            };
+
+            const cells = [];
+            for (let i = 0; i < firstDow; i++) cells.push(<div key={'b' + i} />);
+            for (let day = 1; day <= daysInMonth; day++) {
+                const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
+                const owner = getNightOwner(ds, entries, primary);
+                const col = owner.parent ? colorFor(owner.parent) : null;
+                const isToday = ds === todayStr;
+                const isSel = ds === selectedDay;
+                cells.push(
+                    <div
+                        key={day}
+                        onClick={() => setSelectedDay(isSel ? null : ds)}
+                        style={{
+                            aspectRatio: '1 / 1',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            borderRadius: '8px',
+                            background: col ? col.bg : '#fff',
+                            border: isSel ? '2px solid #111827' : (owner.conflict ? '2px dashed #dc2626' : '1px solid #f3f4f6'),
+                            userSelect: 'none'
+                        }}
+                    >
+                        <span style={{
+                            fontSize: '0.9rem',
+                            fontWeight: isToday ? 800 : 500,
+                            color: col ? col.fg : '#374151',
+                            textDecoration: isToday ? 'underline' : 'none'
+                        }}>{day}</span>
+                        {col && <span style={{ width: 5, height: 5, borderRadius: 3, background: col.solid, marginTop: 2 }} />}
+                    </div>
+                );
+            }
+
+            return (
+                <div>
+                    <div className="card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <button onClick={prevMonth} className="btn btn-secondary">‹</button>
+                            <span style={{ fontSize: '1.1rem', fontWeight: 700 }}>{MONTH_NAMES[viewMonth]} {viewYear}</span>
+                            <button onClick={nextMonth} className="btn btn-secondary">›</button>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', marginBottom: '4px' }}>
+                            {DAY_NAMES.map(d => (
+                                <div key={d} style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af' }}>{d}</div>
+                            ))}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
+                            {cells}
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <h4 className="font-medium text-gray-900 mb-2">Legend · nights this month</h4>
+                        {parents.length === 0 && (
+                            <p className="text-sm text-gray-600">Add parents in the Entries tab to color the calendar.</p>
+                        )}
+                        {parents.map((p, idx) => {
+                            const col = colorFor(p);
+                            return (
+                                <div key={p} style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                                    <span style={{ width: 16, height: 16, borderRadius: 4, background: col.solid, marginRight: 10 }} />
+                                    <span style={{ flex: 1, color: '#374151' }}>{p}{idx === 0 ? ' (Primary)' : ''}</span>
+                                    <span style={{ color: '#6b7280', fontWeight: 600 }}>{monthTally[p] || 0} nights</span>
+                                </div>
+                            );
+                        })}
+                        {hasConflict && (
+                            <p style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '0.5rem' }}>⚠ Some nights have conflicting entries (outlined in red).</p>
+                        )}
+                        <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.6rem' }}>
+                            Each day shows who the child stays with that night. Unassigned nights default to the primary parent.
+                        </p>
+                    </div>
+
+                    {selectedDay && (
+                        <div className="card">
+                            <h3 className="text-lg font-semibold">{fmtLong(selectedDay)}</h3>
+                            <p className="text-sm text-gray-600 mb-2">
+                                Night with: <strong>{selectedOwner?.parent || '—'}</strong>
+                                {selectedOwner?.conflict ? '  ⚠ conflicting entries' : (selectedOwner?.explicit ? '' : '  (default · primary)')}
+                            </p>
+                            {selectedEntries.map(e => (
+                                <div key={e.id} style={{ background: '#eff6ff', borderRadius: 6, padding: '0.25rem 0.6rem', display: 'inline-block', marginRight: 6, marginBottom: 6, fontSize: '0.85rem', color: '#1d4ed8' }}>
+                                    {e.parent}: {e.beginDate} – {e.endDate}{e.note ? ` · ${e.note}` : ''}
+                                </div>
+                            ))}
+                            <div>
+                                <button onClick={() => onAddEntry(selectedDay)} className="btn btn-primary mt-4">+ Add entry on this day</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         // ── schedule generators ───────────────────────────────────────────────
 
         function generateEOWSchedule(secondaryParent, startDateStr, endDateStr, childrenList, weekendStartDay) {
@@ -615,6 +799,7 @@
             // Configuration state
             const [parents, setParents] = useState([]);
             const [children, setChildren] = useState([]);
+            const [viewMode, setViewMode] = useState('list');
             const [showConfig, setShowConfig] = useState(true);
             const [showReporting, setShowReporting] = useState(false);
             const [newParentName, setNewParentName] = useState('');
@@ -852,6 +1037,20 @@
                     childrenPresent: newChildrenPresent,
                     note: ''
                 }]);
+            };
+
+            const addEntryOnDay = (dayStr) => {
+                const newChildrenPresent = {};
+                children.forEach(child => { newChildrenPresent[child] = true; });
+                setEntries([...entries, {
+                    id: generateId(),
+                    parent: '',
+                    beginDate: dayStr,
+                    endDate: addDaysStr(dayStr, 1),
+                    childrenPresent: newChildrenPresent,
+                    note: ''
+                }]);
+                setViewMode('list');
             };
 
             const removeRow = (id) => {
@@ -1252,10 +1451,29 @@
                         </div>
                     </div>
                     <div className="card">
-                        <h1 style={{fontSize: '1.5rem', fontWeight: 'bold', color: '#111827', marginBottom: '1.5rem'}}>
+                        <h1 style={{fontSize: '1.5rem', fontWeight: 'bold', color: '#111827', marginBottom: '1rem'}}>
                             Custody Calendar - {children.join(' & ')}
                         </h1>
-                        
+
+                        {/* View toggle */}
+                        <div style={{display: 'flex', background: '#e5e7eb', borderRadius: '10px', padding: '3px'}}>
+                            {[{id: 'list', label: 'Entries'}, {id: 'calendar', label: 'Calendar'}].map(m => (
+                                <button key={m.id} onClick={() => setViewMode(m.id)} style={{
+                                    flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                    fontSize: '0.9rem',
+                                    fontWeight: viewMode === m.id ? 700 : 500,
+                                    background: viewMode === m.id ? '#fff' : 'transparent',
+                                    color: viewMode === m.id ? '#111827' : '#6b7280',
+                                    boxShadow: viewMode === m.id ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'
+                                }}>{m.label}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {viewMode === 'calendar' ? (
+                        <CalendarView entries={entries} parents={parents} onAddEntry={addEntryOnDay} />
+                    ) : (
+                    <div className="card">
                         {/* Configuration Section */}
                         <div className="config-box mb-6">
                             <div className="flex" style={{justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
@@ -1734,6 +1952,7 @@
                         </div>
 
                     </div>
+                    )}
                 </div>
             );
         }

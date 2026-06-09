@@ -359,19 +359,19 @@
             return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
         }
 
-        // Who has the child the night of `dateStr`? An entry [begin,end] covers the
-        // nights begin .. end-1 (handoff happens on the end day). Nights not covered
-        // by any explicit entry default to the primary parent.
-        function getNightOwner(dateStr, entries, primaryParent) {
+        // Which parent has custody on the calendar day `dateStr`? An entry [begin,end]
+        // covers every day from begin to end inclusive. Days not covered by any entry
+        // are unassigned (shown gray on the calendar).
+        function getDayOwner(dateStr, entries) {
             const owners = [];
             for (const e of entries) {
                 if (!e.beginDate || !e.endDate || !e.parent) continue;
-                if (dateStr >= e.beginDate && dateStr < e.endDate) owners.push(e.parent);
+                if (dateStr >= e.beginDate && dateStr <= e.endDate) owners.push(e.parent);
             }
             const distinct = [...new Set(owners)];
-            if (distinct.length === 0) return { parent: primaryParent || null, conflict: false, explicit: false };
-            if (distinct.length === 1) return { parent: distinct[0], conflict: false, explicit: true };
-            return { parent: distinct[0], conflict: true, explicit: true };
+            if (distinct.length === 0) return { parent: null, conflict: false };
+            if (distinct.length === 1) return { parent: distinct[0], conflict: false };
+            return { parent: distinct[0], conflict: true };
         }
 
         const PARENT_PALETTE = [
@@ -389,7 +389,6 @@
             const [viewMonth, setViewMonth] = useState(now.getMonth());
             const [selectedDay, setSelectedDay] = useState(null);
 
-            const primary = parents[0] || null;
             const todayStr = localTodayStr();
             const colorFor = (parent) => {
                 const idx = parents.indexOf(parent);
@@ -414,14 +413,14 @@
             let hasConflict = false;
             for (let day = 1; day <= daysInMonth; day++) {
                 const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
-                const owner = getNightOwner(ds, entries, primary);
+                const owner = getDayOwner(ds, entries);
                 if (owner.conflict) hasConflict = true;
                 if (owner.parent) monthTally[owner.parent] = (monthTally[owner.parent] || 0) + 1;
             }
 
-            const selectedOwner = selectedDay ? getNightOwner(selectedDay, entries, primary) : null;
+            const selectedOwner = selectedDay ? getDayOwner(selectedDay, entries) : null;
             const selectedEntries = selectedDay
-                ? entries.filter(e => e.beginDate && e.endDate && selectedDay >= e.beginDate && selectedDay < e.endDate)
+                ? entries.filter(e => e.beginDate && e.endDate && selectedDay >= e.beginDate && selectedDay <= e.endDate)
                 : [];
 
             const fmtLong = (ds) => {
@@ -434,7 +433,7 @@
             for (let i = 0; i < firstDow; i++) cells.push(<div key={'b' + i} />);
             for (let day = 1; day <= daysInMonth; day++) {
                 const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
-                const owner = getNightOwner(ds, entries, primary);
+                const owner = getDayOwner(ds, entries);
                 const col = owner.parent ? colorFor(owner.parent) : null;
                 const isToday = ds === todayStr;
                 const isSel = ds === selectedDay;
@@ -445,23 +444,21 @@
                         style={{
                             aspectRatio: '1 / 1',
                             display: 'flex',
-                            flexDirection: 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
                             cursor: 'pointer',
                             borderRadius: '8px',
-                            background: col ? col.bg : '#fff',
-                            border: isSel ? '2px solid #111827' : (owner.conflict ? '2px dashed #dc2626' : '1px solid #f3f4f6'),
+                            background: col ? col.solid : '#e5e7eb',
+                            border: isSel ? '3px solid #111827' : (owner.conflict ? '2px dashed #dc2626' : 'none'),
                             userSelect: 'none'
                         }}
                     >
                         <span style={{
                             fontSize: '0.9rem',
-                            fontWeight: isToday ? 800 : 500,
-                            color: col ? col.fg : '#374151',
+                            fontWeight: isToday ? 800 : 600,
+                            color: col ? '#fff' : '#9ca3af',
                             textDecoration: isToday ? 'underline' : 'none'
                         }}>{day}</span>
-                        {col && <span style={{ width: 5, height: 5, borderRadius: 3, background: col.solid, marginTop: 2 }} />}
                     </div>
                 );
             }
@@ -485,7 +482,7 @@
                     </div>
 
                     <div className="card">
-                        <h4 className="font-medium text-gray-900 mb-2">Legend · nights this month</h4>
+                        <h4 className="font-medium text-gray-900 mb-2">Legend · days this month</h4>
                         {parents.length === 0 && (
                             <p className="text-sm text-gray-600">Add parents in the Entries tab to color the calendar.</p>
                         )}
@@ -495,15 +492,19 @@
                                 <div key={p} style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
                                     <span style={{ width: 16, height: 16, borderRadius: 4, background: col.solid, marginRight: 10 }} />
                                     <span style={{ flex: 1, color: '#374151' }}>{p}{idx === 0 ? ' (Primary)' : ''}</span>
-                                    <span style={{ color: '#6b7280', fontWeight: 600 }}>{monthTally[p] || 0} nights</span>
+                                    <span style={{ color: '#6b7280', fontWeight: 600 }}>{monthTally[p] || 0} days</span>
                                 </div>
                             );
                         })}
+                        <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                            <span style={{ width: 16, height: 16, borderRadius: 4, background: '#e5e7eb', marginRight: 10 }} />
+                            <span style={{ flex: 1, color: '#374151' }}>No custody entry</span>
+                        </div>
                         {hasConflict && (
-                            <p style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '0.5rem' }}>⚠ Some nights have conflicting entries (outlined in red).</p>
+                            <p style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '0.5rem' }}>⚠ Some days have conflicting entries (outlined in red).</p>
                         )}
                         <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.6rem' }}>
-                            Each day shows who the child stays with that night. Unassigned nights default to the primary parent.
+                            Each day is colored by the parent who has custody. Days with no custody entry are gray.
                         </p>
                     </div>
 
@@ -511,8 +512,8 @@
                         <div className="card">
                             <h3 className="text-lg font-semibold">{fmtLong(selectedDay)}</h3>
                             <p className="text-sm text-gray-600 mb-2">
-                                Night with: <strong>{selectedOwner?.parent || '—'}</strong>
-                                {selectedOwner?.conflict ? '  ⚠ conflicting entries' : (selectedOwner?.explicit ? '' : '  (default · primary)')}
+                                Custody: <strong>{selectedOwner?.parent || 'Unassigned'}</strong>
+                                {selectedOwner?.conflict ? '  ⚠ conflicting entries' : (selectedOwner?.parent ? '' : '  (no entry for this day)')}
                             </p>
                             {selectedEntries.map(e => (
                                 <div key={e.id} style={{ background: '#eff6ff', borderRadius: 6, padding: '0.25rem 0.6rem', display: 'inline-block', marginRight: 6, marginBottom: 6, fontSize: '0.85rem', color: '#1d4ed8' }}>

@@ -374,16 +374,35 @@
             return { parent: distinct[0], conflict: true };
         }
 
-        const PARENT_PALETTE = [
-            { bg: '#dbeafe', fg: '#1d4ed8', solid: '#2563eb' }, // blue
-            { bg: '#dcfce7', fg: '#15803d', solid: '#16a34a' }, // green
-            { bg: '#fef3c7', fg: '#b45309', solid: '#d97706' }, // amber
-            { bg: '#ede9fe', fg: '#6d28d9', solid: '#7c3aed' }, // purple
-            { bg: '#fce7f3', fg: '#be185d', solid: '#db2777' }, // pink
-            { bg: '#ccfbf1', fg: '#0f766e', solid: '#0d9488' }, // teal
+        const COLOR_CHOICES = [
+            '#2563eb', // blue
+            '#16a34a', // green
+            '#d97706', // amber
+            '#7c3aed', // purple
+            '#db2777', // pink
+            '#0d9488', // teal
+            '#dc2626', // red
+            '#ca8a04', // gold
+            '#4f46e5', // indigo
+            '#0891b2', // cyan
+            '#65a30d', // lime
+            '#e11d48', // rose
         ];
 
-        function CalendarView({ entries, parents, onCreateEntry }) {
+        // Resolve a stored color for a name, falling back to a palette color by position.
+        function colorForName(name, list, overrides) {
+            if (overrides && overrides[name]) return overrides[name];
+            const i = list.indexOf(name);
+            return i >= 0 ? COLOR_CHOICES[i % COLOR_CHOICES.length] : '#9ca3af';
+        }
+
+        // Pick the first palette color not already used by an existing name.
+        function nextColor(overrides) {
+            const used = Object.values(overrides || {});
+            return COLOR_CHOICES.find(c => !used.includes(c)) || COLOR_CHOICES[Object.keys(overrides || {}).length % COLOR_CHOICES.length];
+        }
+
+        function CalendarView({ entries, parents, parentColors, onCreateEntry }) {
             const now = new Date();
             const [viewYear, setViewYear] = useState(now.getFullYear());
             const [viewMonth, setViewMonth] = useState(now.getMonth());
@@ -392,10 +411,7 @@
             const [pendingRange, setPendingRange] = useState(null); // {start, end} awaiting parent
 
             const todayStr = localTodayStr();
-            const colorFor = (parent) => {
-                const idx = parents.indexOf(parent);
-                return idx >= 0 ? PARENT_PALETTE[idx % PARENT_PALETTE.length] : null;
-            };
+            const colorFor = (parent) => colorForName(parent, parents, parentColors);
 
             const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
             const firstDow = new Date(viewYear, viewMonth, 1).getDay();
@@ -469,7 +485,7 @@
                             justifyContent: 'center',
                             cursor: 'pointer',
                             borderRadius: '8px',
-                            background: col ? col.solid : '#e5e7eb',
+                            background: col || '#e5e7eb',
                             border,
                             boxSizing: 'border-box',
                             userSelect: 'none'
@@ -524,7 +540,7 @@
                                             const col = colorFor(p);
                                             return (
                                                 <button key={p} className="btn"
-                                                    style={{ background: col.solid, color: '#fff' }}
+                                                    style={{ background: col, color: '#fff' }}
                                                     onClick={() => { onCreateEntry(pendingRange.start, pendingRange.end, p); resetSelection(); }}>
                                                     {p}{idx === 0 ? ' (Primary)' : ''}
                                                 </button>
@@ -546,7 +562,7 @@
                             const col = colorFor(p);
                             return (
                                 <div key={p} style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
-                                    <span style={{ width: 16, height: 16, borderRadius: 4, background: col.solid, marginRight: 10 }} />
+                                    <span style={{ width: 16, height: 16, borderRadius: 4, background: col, marginRight: 10 }} />
                                     <span style={{ flex: 1, color: '#374151' }}>{p}{idx === 0 ? ' (Primary)' : ''}</span>
                                     <span style={{ color: '#6b7280', fontWeight: 600 }}>{monthTally[p] || 0} days</span>
                                 </div>
@@ -635,6 +651,52 @@
                 }
                 current.setDate(current.getDate() + 7);
                 weekNum++;
+            }
+            return entries;
+        }
+
+        // ~70/30: every other weekend for the secondary parent plus one midweek
+        // overnight (single day) each week.
+        function generateEOWMidweek(secondaryParent, startDateStr, endDateStr, childrenList, weekendStartDay, midweekDow) {
+            const entries = generateEOWSchedule(secondaryParent, startDateStr, endDateStr, childrenList, weekendStartDay);
+            const start = new Date(startDateStr + 'T00:00:00.000');
+            const end = new Date(endDateStr + 'T00:00:00.000');
+            let current = new Date(start);
+            while (current.getDay() !== midweekDow) current.setDate(current.getDate() + 1);
+            while (current <= end) {
+                const cp = {};
+                childrenList.forEach(c => { cp[c] = true; });
+                const ds = `${current.getFullYear()}-${pad2(current.getMonth() + 1)}-${pad2(current.getDate())}`;
+                entries.push({ id: generateId(), parent: secondaryParent, beginDate: ds, endDate: ds, childrenPresent: cp, note: 'Midweek' });
+                current.setDate(current.getDate() + 7);
+            }
+            return entries;
+        }
+
+        // 50/50 "2-2-3" rotation between two parents over a 14-day cycle.
+        function generate223(parent1, parent2, startDateStr, endDateStr, childrenList) {
+            const entries = [];
+            const start = new Date(startDateStr + 'T00:00:00.000');
+            const end = new Date(endDateStr + 'T00:00:00.000');
+            const blocks = [
+                [0, 1, parent1], [2, 3, parent2], [4, 6, parent1],
+                [7, 8, parent2], [9, 10, parent1], [11, 13, parent2]
+            ];
+            const fmt = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+            let cycle = new Date(start);
+            while (cycle.getDay() !== 1) cycle.setDate(cycle.getDate() + 1); // first Monday
+            while (cycle <= end) {
+                for (const [o0, o1, parent] of blocks) {
+                    const b = new Date(cycle); b.setDate(b.getDate() + o0);
+                    const e = new Date(cycle); e.setDate(e.getDate() + o1);
+                    if (e < start || b > end) continue;
+                    const ab = b < start ? new Date(start) : b;
+                    const ae = e > end ? new Date(end) : e;
+                    const cp = {};
+                    childrenList.forEach(c => { cp[c] = true; });
+                    entries.push({ id: generateId(), parent, beginDate: fmt(ab), endDate: fmt(ae), childrenPresent: cp, note: '2-2-3' });
+                }
+                cycle.setDate(cycle.getDate() + 14);
             }
             return entries;
         }
@@ -838,6 +900,9 @@
             // Configuration state
             const [parents, setParents] = useState([]);
             const [children, setChildren] = useState([]);
+            const [parentColors, setParentColors] = useState({});
+            const [childColors, setChildColors] = useState({});
+            const [editingColor, setEditingColor] = useState(null); // { type: 'parent'|'child', name }
             const [viewMode, setViewMode] = useState('list');
             const [showConfig, setShowConfig] = useState(true);
             const [showReporting, setShowReporting] = useState(false);
@@ -872,6 +937,7 @@
             const [scheduleJointParent1, setScheduleJointParent1] = useState('');
             const [scheduleJointParent2, setScheduleJointParent2] = useState('');
             const [scheduleEOWDay, setScheduleEOWDay] = useState('fri');
+            const [scheduleMidweekDow, setScheduleMidweekDow] = useState(3); // Wednesday
 
             const currentYear = new Date().getFullYear();
             const today = new Date();
@@ -885,8 +951,10 @@
 
             // Configuration functions
             const addParent = () => {
-                if (newParentName.trim() && !parents.includes(newParentName.trim())) {
-                    setParents([...parents, newParentName.trim()]);
+                const name = newParentName.trim();
+                if (name && !parents.includes(name)) {
+                    setParents([...parents, name]);
+                    setParentColors({ ...parentColors, [name]: nextColor(parentColors) });
                     setNewParentName('');
                 }
             };
@@ -894,14 +962,26 @@
             const removeParent = (parent) => {
                 if (parents.length > 1 && window.confirm(`Remove parent "${parent}"? This cannot be undone.`)) {
                     setParents(parents.filter(p => p !== parent));
+                    const nc = { ...parentColors }; delete nc[parent]; setParentColors(nc);
                 }
+            };
+
+            const setPrimary = (parent) => {
+                setParents([parent, ...parents.filter(p => p !== parent)]);
+            };
+
+            const setColor = (type, name, color) => {
+                if (type === 'parent') setParentColors({ ...parentColors, [name]: color });
+                else setChildColors({ ...childColors, [name]: color });
+                setEditingColor(null);
             };
 
             const addChild = () => {
                 if (newChildName.trim() && !children.includes(newChildName.trim())) {
                     const childName = newChildName.trim();
                     setChildren([...children, childName]);
-                    
+                    setChildColors({ ...childColors, [childName]: nextColor(childColors) });
+
                     // Add this child to all existing entries
                     setEntries(entries.map(entry => ({
                         ...entry,
@@ -910,7 +990,7 @@
                             [childName]: true
                         }
                     })));
-                    
+
                     setNewChildName('');
                 }
             };
@@ -918,7 +998,8 @@
             const removeChild = (child) => {
                 if (children.length > 1 && window.confirm(`Remove child "${child}"? This cannot be undone.`)) {
                     setChildren(children.filter(c => c !== child));
-                    
+                    const nc = { ...childColors }; delete nc[child]; setChildColors(nc);
+
                     // Remove this child from all entries
                     setEntries(entries.map(entry => {
                         const newChildrenPresent = { ...entry.childrenPresent };
@@ -928,7 +1009,7 @@
                             childrenPresent: newChildrenPresent
                         };
                     }));
-                    
+
                     // Reset analysis if it was set to the removed child
                     if (analysisChild === child) {
                         setAnalysisChild('all');
@@ -1144,18 +1225,22 @@
 
             const runScheduleGenerator = () => {
                 let newEntries = [];
-                if (schedulePattern === 'eow') {
+                if (schedulePattern === 'eow' || schedulePattern === 'eow-midweek') {
                     if (!scheduleSecondaryParent || !scheduleStart || !scheduleEnd) {
                         alert('Please select a parent and set a date range.');
                         return;
                     }
-                    newEntries = generateEOWSchedule(scheduleSecondaryParent, scheduleStart, scheduleEnd, children, scheduleEOWDay);
+                    newEntries = schedulePattern === 'eow'
+                        ? generateEOWSchedule(scheduleSecondaryParent, scheduleStart, scheduleEnd, children, scheduleEOWDay)
+                        : generateEOWMidweek(scheduleSecondaryParent, scheduleStart, scheduleEnd, children, scheduleEOWDay, scheduleMidweekDow);
                 } else {
                     if (!scheduleJointParent1 || !scheduleJointParent2 || !scheduleStart || !scheduleEnd) {
                         alert('Please select both parents and set a date range.');
                         return;
                     }
-                    newEntries = generateJointWeeklySchedule(scheduleJointParent1, scheduleJointParent2, scheduleStart, scheduleEnd, children);
+                    newEntries = schedulePattern === '2-2-3'
+                        ? generate223(scheduleJointParent1, scheduleJointParent2, scheduleStart, scheduleEnd, children)
+                        : generateJointWeeklySchedule(scheduleJointParent1, scheduleJointParent2, scheduleStart, scheduleEnd, children);
                 }
                 if (newEntries.length === 0) {
                     alert('No entries generated. Check your date range.');
@@ -1509,7 +1594,7 @@
                     </div>
 
                     {viewMode === 'calendar' ? (
-                        <CalendarView entries={entries} parents={parents} onCreateEntry={createEntryFromCalendar} />
+                        <CalendarView entries={entries} parents={parents} parentColors={parentColors} onCreateEntry={createEntryFromCalendar} />
                     ) : (
                     <div className="card">
                         {/* Configuration Section */}
@@ -1544,7 +1629,21 @@
                                         <div className="config-list mb-2">
                                             {parents.map((parent, index) => (
                                                 <div key={parent} className="config-item">
-                                                    <span>{parent} {index === 0 ? '(Primary)' : ''}</span>
+                                                    <button
+                                                        onClick={() => setEditingColor(editingColor && editingColor.type === 'parent' && editingColor.name === parent ? null : { type: 'parent', name: parent })}
+                                                        title="Change color"
+                                                        style={{ width: 18, height: 18, borderRadius: 4, border: '1px solid #d1d5db', background: colorForName(parent, parents, parentColors), cursor: 'pointer', padding: 0 }}
+                                                    />
+                                                    <span>{parent}{index === 0 ? ' (Primary)' : ''}</span>
+                                                    {index !== 0 && (
+                                                        <button
+                                                            onClick={() => setPrimary(parent)}
+                                                            title="Make primary"
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 0.25rem', fontSize: '1rem', color: '#9ca3af' }}
+                                                        >
+                                                            ☆
+                                                        </button>
+                                                    )}
                                                     <button
                                                         onClick={() => removeParent(parent)}
                                                         disabled={parents.length === 1}
@@ -1562,6 +1661,15 @@
                                                 </div>
                                             ))}
                                         </div>
+                                        {editingColor && editingColor.type === 'parent' && (
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: '0.75rem', padding: '0.6rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                                                <span style={{ fontSize: '0.8rem', color: '#6b7280', width: '100%' }}>Color for {editingColor.name}:</span>
+                                                {COLOR_CHOICES.map(c => (
+                                                    <button key={c} onClick={() => setColor('parent', editingColor.name, c)}
+                                                        style={{ width: 24, height: 24, borderRadius: '50%', border: colorForName(editingColor.name, parents, parentColors) === c ? '3px solid #111827' : '1px solid #d1d5db', background: c, cursor: 'pointer', padding: 0 }} />
+                                                ))}
+                                            </div>
+                                        )}
                                         <div className="flex gap-2">
                                             <input
                                                 type="text"
@@ -1583,6 +1691,11 @@
                                         <div className="config-list mb-2">
                                             {children.map(child => (
                                                 <div key={child} className="config-item">
+                                                    <button
+                                                        onClick={() => setEditingColor(editingColor && editingColor.type === 'child' && editingColor.name === child ? null : { type: 'child', name: child })}
+                                                        title="Change color"
+                                                        style={{ width: 18, height: 18, borderRadius: 4, border: '1px solid #d1d5db', background: colorForName(child, children, childColors), cursor: 'pointer', padding: 0 }}
+                                                    />
                                                     <span>{child}</span>
                                                     <button
                                                         onClick={() => removeChild(child)}
@@ -1601,6 +1714,15 @@
                                                 </div>
                                             ))}
                                         </div>
+                                        {editingColor && editingColor.type === 'child' && (
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: '0.75rem', padding: '0.6rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                                                <span style={{ fontSize: '0.8rem', color: '#6b7280', width: '100%' }}>Color for {editingColor.name}:</span>
+                                                {COLOR_CHOICES.map(c => (
+                                                    <button key={c} onClick={() => setColor('child', editingColor.name, c)}
+                                                        style={{ width: 24, height: 24, borderRadius: '50%', border: colorForName(editingColor.name, children, childColors) === c ? '3px solid #111827' : '1px solid #d1d5db', background: c, cursor: 'pointer', padding: 0 }} />
+                                                ))}
+                                            </div>
+                                        )}
                                         <div className="flex gap-2">
                                             <input
                                                 type="text"
@@ -1648,15 +1770,18 @@
                                 {/* Pattern */}
                                 <div className="mb-4">
                                     <label className="font-medium text-gray-700 mb-2" style={{display:'block'}}>Custody Pattern</label>
-                                    <div className="flex gap-4">
-                                        <label className="flex" style={{alignItems:'center',gap:'0.4rem',cursor:'pointer'}}>
-                                            <input type="radio" value="eow" checked={schedulePattern==='eow'} onChange={e=>setSchedulePattern(e.target.value)} />
-                                            Primary + Every Other Weekend
-                                        </label>
-                                        <label className="flex" style={{alignItems:'center',gap:'0.4rem',cursor:'pointer'}}>
-                                            <input type="radio" value="joint-weekly" checked={schedulePattern==='joint-weekly'} onChange={e=>setSchedulePattern(e.target.value)} />
-                                            Joint / Alternating Weekly
-                                        </label>
+                                    <div style={{display:'flex', flexDirection:'column', gap:'0.5rem'}}>
+                                        {[
+                                            {v:'eow', label:'Every Other Weekend (~80/20)'},
+                                            {v:'eow-midweek', label:'Every Other Weekend + Midweek (~70/30)'},
+                                            {v:'joint-weekly', label:'Alternating Weeks (50/50)'},
+                                            {v:'2-2-3', label:'2-2-3 Rotation (50/50)'},
+                                        ].map(opt => (
+                                            <label key={opt.v} className="flex" style={{alignItems:'center',gap:'0.4rem',cursor:'pointer'}}>
+                                                <input type="radio" value={opt.v} checked={schedulePattern===opt.v} onChange={e=>setSchedulePattern(e.target.value)} />
+                                                {opt.label}
+                                            </label>
+                                        ))}
                                     </div>
                                 </div>
 
@@ -1672,11 +1797,11 @@
                                     </div>
                                 </div>
 
-                                {/* EOW options */}
-                                {schedulePattern === 'eow' && (
+                                {/* EOW / EOW+midweek options */}
+                                {(schedulePattern === 'eow' || schedulePattern === 'eow-midweek') && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                         <div>
-                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Non-Primary Parent (gets EOW)</label>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Non-Primary Parent (gets the weekends)</label>
                                             <select value={scheduleSecondaryParent} onChange={e=>setScheduleSecondaryParent(e.target.value)} className="form-input">
                                                 <option value="">Select parent…</option>
                                                 {parents.map(p => <option key={p} value={p}>{p}</option>)}
@@ -1689,21 +1814,32 @@
                                                 <option value="sat">Saturday</option>
                                             </select>
                                         </div>
+                                        {schedulePattern === 'eow-midweek' && (
+                                            <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Midweek Overnight</label>
+                                                <select value={scheduleMidweekDow} onChange={e=>setScheduleMidweekDow(parseInt(e.target.value))} className="form-input">
+                                                    <option value={1}>Monday</option>
+                                                    <option value={2}>Tuesday</option>
+                                                    <option value={3}>Wednesday</option>
+                                                    <option value={4}>Thursday</option>
+                                                </select>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
-                                {/* Joint weekly options */}
-                                {schedulePattern === 'joint-weekly' && (
+                                {/* Joint weekly / 2-2-3 options */}
+                                {(schedulePattern === 'joint-weekly' || schedulePattern === '2-2-3') && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                         <div>
-                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Parent with Week 1</label>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>{schedulePattern === '2-2-3' ? 'First parent (starts cycle)' : 'Parent with Week 1'}</label>
                                             <select value={scheduleJointParent1} onChange={e=>setScheduleJointParent1(e.target.value)} className="form-input">
                                                 <option value="">Select parent…</option>
                                                 {parents.map(p => <option key={p} value={p}>{p}</option>)}
                                             </select>
                                         </div>
                                         <div>
-                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>Parent with Week 2</label>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{display:'block'}}>{schedulePattern === '2-2-3' ? 'Second parent' : 'Parent with Week 2'}</label>
                                             <select value={scheduleJointParent2} onChange={e=>setScheduleJointParent2(e.target.value)} className="form-input">
                                                 <option value="">Select parent…</option>
                                                 {parents.map(p => <option key={p} value={p}>{p}</option>)}

@@ -1508,6 +1508,22 @@
                 }
             };
 
+            const resetAll = () => {
+                if (window.confirm('Reset all data? This erases all parents, children, colors, and entries and reopens the setup wizard. This cannot be undone.')) {
+                    setParents([]);
+                    setChildren([]);
+                    setParentColors({});
+                    setChildColors({});
+                    setEntries([{ id: generateId(), parent: '', beginDate: '', endDate: '', childrenPresent: {}, note: '' }]);
+                    setReportingMode('custom');
+                    setCustomStart('');
+                    setCustomEnd('');
+                    setAnalysisChild('all');
+                    setViewMode('list');
+                    setShowWizard(true);
+                }
+            };
+
             const runScheduleGenerator = () => {
                 let newEntries = [];
                 if (schedulePattern === 'eow' || schedulePattern === 'eow-midweek') {
@@ -2025,8 +2041,11 @@
                                     </div>
                                 </div>
                             )}
+                            {showConfig && (
+                                <button onClick={resetAll} className="btn btn-danger" style={{ marginTop: '1rem' }}>Reset all data</button>
+                            )}
                         </div>
-                        
+
                         {/* Header Actions */}
                         <div className="flex flex-wrap gap-3 mb-6">
                             <button onClick={() => setShowWizard(true)} className="btn btn-secondary">🧭 Setup Wizard</button>

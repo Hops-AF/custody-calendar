@@ -383,11 +383,13 @@
             { bg: '#ccfbf1', fg: '#0f766e', solid: '#0d9488' }, // teal
         ];
 
-        function CalendarView({ entries, parents, onAddEntry }) {
+        function CalendarView({ entries, parents, onCreateEntry }) {
             const now = new Date();
             const [viewYear, setViewYear] = useState(now.getFullYear());
             const [viewMonth, setViewMonth] = useState(now.getMonth());
-            const [selectedDay, setSelectedDay] = useState(null);
+            const [pendingStart, setPendingStart] = useState(null);
+            const [hoverDay, setHoverDay] = useState(null);
+            const [pendingRange, setPendingRange] = useState(null); // {start, end} awaiting parent
 
             const todayStr = localTodayStr();
             const colorFor = (parent) => {
@@ -398,15 +400,26 @@
             const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
             const firstDow = new Date(viewYear, viewMonth, 1).getDay();
 
+            const resetSelection = () => { setPendingStart(null); setHoverDay(null); setPendingRange(null); };
             const prevMonth = () => {
-                setSelectedDay(null);
+                resetSelection();
                 if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
                 else setViewMonth(m => m - 1);
             };
             const nextMonth = () => {
-                setSelectedDay(null);
+                resetSelection();
                 if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
                 else setViewMonth(m => m + 1);
+            };
+
+            const handleDayClick = (ds) => {
+                if (pendingRange) { setPendingRange(null); setPendingStart(ds); setHoverDay(null); return; }
+                if (!pendingStart) { setPendingStart(ds); return; }
+                const start = ds < pendingStart ? ds : pendingStart;
+                const end = ds < pendingStart ? pendingStart : ds;
+                setPendingRange({ start, end });
+                setPendingStart(null);
+                setHoverDay(null);
             };
 
             const monthTally = {};
@@ -418,15 +431,17 @@
                 if (owner.parent) monthTally[owner.parent] = (monthTally[owner.parent] || 0) + 1;
             }
 
-            const selectedOwner = selectedDay ? getDayOwner(selectedDay, entries) : null;
-            const selectedEntries = selectedDay
-                ? entries.filter(e => e.beginDate && e.endDate && selectedDay >= e.beginDate && selectedDay <= e.endDate)
-                : [];
+            // Selection highlighting helpers
+            const previewLo = pendingStart && hoverDay ? (pendingStart < hoverDay ? pendingStart : hoverDay) : null;
+            const previewHi = pendingStart && hoverDay ? (pendingStart < hoverDay ? hoverDay : pendingStart) : null;
+            const inPreview = (ds) => previewLo && ds >= previewLo && ds <= previewHi;
+            const inPendingRange = (ds) => pendingRange && ds >= pendingRange.start && ds <= pendingRange.end;
+            const isSelEdge = (ds) => ds === pendingStart || (pendingRange && (ds === pendingRange.start || ds === pendingRange.end));
 
             const fmtLong = (ds) => {
                 const [y, m, d] = ds.split('-');
                 return new Date(parseInt(y), parseInt(m) - 1, parseInt(d))
-                    .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+                    .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             };
 
             const cells = [];
@@ -436,11 +451,17 @@
                 const owner = getDayOwner(ds, entries);
                 const col = owner.parent ? colorFor(owner.parent) : null;
                 const isToday = ds === todayStr;
-                const isSel = ds === selectedDay;
+                const selEdge = isSelEdge(ds);
+                const selRange = inPendingRange(ds) || inPreview(ds);
+                let border = 'none';
+                if (selEdge) border = '3px solid #2563eb';
+                else if (selRange) border = '2px solid #93c5fd';
+                else if (owner.conflict) border = '2px dashed #dc2626';
                 cells.push(
                     <div
                         key={day}
-                        onClick={() => setSelectedDay(isSel ? null : ds)}
+                        onClick={() => handleDayClick(ds)}
+                        onMouseEnter={() => { if (pendingStart) setHoverDay(ds); }}
                         style={{
                             aspectRatio: '1 / 1',
                             display: 'flex',
@@ -449,7 +470,8 @@
                             cursor: 'pointer',
                             borderRadius: '8px',
                             background: col ? col.solid : '#e5e7eb',
-                            border: isSel ? '3px solid #111827' : (owner.conflict ? '2px dashed #dc2626' : 'none'),
+                            border,
+                            boxSizing: 'border-box',
                             userSelect: 'none'
                         }}
                     >
@@ -463,14 +485,19 @@
                 );
             }
 
+            const hint = pendingRange ? 'Choose which parent has custody for this range.'
+                : pendingStart ? 'Now tap the END date (or tap the same day for a single day).'
+                : 'Tap the START date, then the END date, to add a custody period.';
+
             return (
                 <div>
                     <div className="card">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                             <button onClick={prevMonth} className="btn btn-secondary">‹</button>
                             <span style={{ fontSize: '1.1rem', fontWeight: 700 }}>{MONTH_NAMES[viewMonth]} {viewYear}</span>
                             <button onClick={nextMonth} className="btn btn-secondary">›</button>
                         </div>
+                        <p style={{ fontSize: '0.8rem', color: '#2563eb', textAlign: 'center', marginBottom: '0.75rem' }}>{hint}</p>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', marginBottom: '4px' }}>
                             {DAY_NAMES.map(d => (
                                 <div key={d} style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af' }}>{d}</div>
@@ -480,6 +507,35 @@
                             {cells}
                         </div>
                     </div>
+
+                    {pendingRange && (
+                        <div className="config-box mb-6">
+                            <h4 className="font-semibold mb-2">
+                                New custody period: {fmtLong(pendingRange.start)} – {fmtLong(pendingRange.end)}
+                                <span style={{ color: '#6b7280', fontWeight: 400 }}> · {daysInclusive(pendingRange.start, pendingRange.end)} days, {nightsInclusive(pendingRange.start, pendingRange.end)} nights</span>
+                            </h4>
+                            {parents.length === 0 ? (
+                                <p className="text-sm text-gray-600">Add parents in the Entries tab first, then you can assign custody.</p>
+                            ) : (
+                                <div>
+                                    <p className="text-sm text-gray-700 mb-2">Assign to:</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {parents.map((p, idx) => {
+                                            const col = colorFor(p);
+                                            return (
+                                                <button key={p} className="btn"
+                                                    style={{ background: col.solid, color: '#fff' }}
+                                                    onClick={() => { onCreateEntry(pendingRange.start, pendingRange.end, p); resetSelection(); }}>
+                                                    {p}{idx === 0 ? ' (Primary)' : ''}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                            <button onClick={resetSelection} className="btn btn-secondary mt-4">Cancel</button>
+                        </div>
+                    )}
 
                     <div className="card">
                         <h4 className="font-medium text-gray-900 mb-2">Legend · days this month</h4>
@@ -507,24 +563,6 @@
                             Each day is colored by the parent who has custody. Days with no custody entry are gray.
                         </p>
                     </div>
-
-                    {selectedDay && (
-                        <div className="card">
-                            <h3 className="text-lg font-semibold">{fmtLong(selectedDay)}</h3>
-                            <p className="text-sm text-gray-600 mb-2">
-                                Custody: <strong>{selectedOwner?.parent || 'Unassigned'}</strong>
-                                {selectedOwner?.conflict ? '  ⚠ conflicting entries' : (selectedOwner?.parent ? '' : '  (no entry for this day)')}
-                            </p>
-                            {selectedEntries.map(e => (
-                                <div key={e.id} style={{ background: '#eff6ff', borderRadius: 6, padding: '0.25rem 0.6rem', display: 'inline-block', marginRight: 6, marginBottom: 6, fontSize: '0.85rem', color: '#1d4ed8' }}>
-                                    {e.parent}: {e.beginDate} – {e.endDate}{e.note ? ` · ${e.note}` : ''}
-                                </div>
-                            ))}
-                            <div>
-                                <button onClick={() => onAddEntry(selectedDay)} className="btn btn-primary mt-4">+ Add entry on this day</button>
-                            </div>
-                        </div>
-                    )}
                 </div>
             );
         }
@@ -1040,18 +1078,17 @@
                 }]);
             };
 
-            const addEntryOnDay = (dayStr) => {
+            const createEntryFromCalendar = (start, end, parent) => {
                 const newChildrenPresent = {};
                 children.forEach(child => { newChildrenPresent[child] = true; });
                 setEntries([...entries, {
                     id: generateId(),
-                    parent: '',
-                    beginDate: dayStr,
-                    endDate: addDaysStr(dayStr, 1),
+                    parent,
+                    beginDate: start,
+                    endDate: end,
                     childrenPresent: newChildrenPresent,
                     note: ''
                 }]);
-                setViewMode('list');
             };
 
             const removeRow = (id) => {
@@ -1472,7 +1509,7 @@
                     </div>
 
                     {viewMode === 'calendar' ? (
-                        <CalendarView entries={entries} parents={parents} onAddEntry={addEntryOnDay} />
+                        <CalendarView entries={entries} parents={parents} onCreateEntry={createEntryFromCalendar} />
                     ) : (
                     <div className="card">
                         {/* Configuration Section */}

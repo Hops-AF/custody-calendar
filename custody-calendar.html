@@ -361,11 +361,13 @@
 
         // Which parent has custody on the calendar day `dateStr`? An entry [begin,end]
         // covers every day from begin to end inclusive. Days not covered by any entry
-        // are unassigned (shown gray on the calendar).
-        function getDayOwner(dateStr, entries) {
+        // are unassigned (shown gray on the calendar). When `childFilter` is set, only
+        // entries that include that child are considered.
+        function getDayOwner(dateStr, entries, childFilter) {
             const owners = [];
             for (const e of entries) {
                 if (!e.beginDate || !e.endDate || !e.parent) continue;
+                if (childFilter && !(e.childrenPresent && e.childrenPresent[childFilter])) continue;
                 if (dateStr >= e.beginDate && dateStr <= e.endDate) owners.push(e.parent);
             }
             const distinct = [...new Set(owners)];
@@ -402,13 +404,14 @@
             return COLOR_CHOICES.find(c => !used.includes(c)) || COLOR_CHOICES[Object.keys(overrides || {}).length % COLOR_CHOICES.length];
         }
 
-        function CalendarView({ entries, parents, parentColors, onCreateEntry }) {
+        function CalendarView({ entries, parents, parentColors, children, childColors, onCreateEntry }) {
             const now = new Date();
             const [viewYear, setViewYear] = useState(now.getFullYear());
             const [viewMonth, setViewMonth] = useState(now.getMonth());
             const [pendingStart, setPendingStart] = useState(null);
             const [hoverDay, setHoverDay] = useState(null);
             const [pendingRange, setPendingRange] = useState(null); // {start, end} awaiting parent
+            const [childFilter, setChildFilter] = useState(null); // null = all children
 
             const todayStr = localTodayStr();
             const colorFor = (parent) => colorForName(parent, parents, parentColors);
@@ -442,7 +445,7 @@
             let hasConflict = false;
             for (let day = 1; day <= daysInMonth; day++) {
                 const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
-                const owner = getDayOwner(ds, entries);
+                const owner = getDayOwner(ds, entries, childFilter);
                 if (owner.conflict) hasConflict = true;
                 if (owner.parent) monthTally[owner.parent] = (monthTally[owner.parent] || 0) + 1;
             }
@@ -464,7 +467,7 @@
             for (let i = 0; i < firstDow; i++) cells.push(<div key={'b' + i} />);
             for (let day = 1; day <= daysInMonth; day++) {
                 const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
-                const owner = getDayOwner(ds, entries);
+                const owner = getDayOwner(ds, entries, childFilter);
                 const col = owner.parent ? colorFor(owner.parent) : null;
                 const isToday = ds === todayStr;
                 const selEdge = isSelEdge(ds);
@@ -514,6 +517,20 @@
                             <button onClick={nextMonth} className="btn btn-secondary">›</button>
                         </div>
                         <p style={{ fontSize: '0.8rem', color: '#2563eb', textAlign: 'center', marginBottom: '0.75rem' }}>{hint}</p>
+                        {children && children.length > 1 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center', marginBottom: '0.75rem' }}>
+                                <button onClick={() => setChildFilter(null)} className="btn btn-sm"
+                                    style={{ background: childFilter === null ? '#111827' : '#e5e7eb', color: childFilter === null ? '#fff' : '#374151' }}>
+                                    All children
+                                </button>
+                                {children.map(c => (
+                                    <button key={c} onClick={() => setChildFilter(c)} className="btn btn-sm"
+                                        style={{ background: childFilter === c ? colorForName(c, children, childColors) : '#e5e7eb', color: childFilter === c ? '#fff' : '#374151' }}>
+                                        {c}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', marginBottom: '4px' }}>
                             {DAY_NAMES.map(d => (
                                 <div key={d} style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af' }}>{d}</div>
@@ -541,7 +558,7 @@
                                             return (
                                                 <button key={p} className="btn"
                                                     style={{ background: col, color: '#fff' }}
-                                                    onClick={() => { onCreateEntry(pendingRange.start, pendingRange.end, p); resetSelection(); }}>
+                                                    onClick={() => { onCreateEntry(pendingRange.start, pendingRange.end, p, childFilter); resetSelection(); }}>
                                                     {p}{idx === 0 ? ' (Primary)' : ''}
                                                 </button>
                                             );
@@ -896,6 +913,263 @@
             );
         }
 
+        function SetupWizard({ onComplete, onCancel }) {
+            const curYear = new Date().getFullYear();
+            const [step, setStep] = useState(0);
+            const [dParents, setDParents] = useState([]);
+            const [dChildren, setDChildren] = useState([]);
+            const [pName, setPName] = useState('');
+            const [cName, setCName] = useState('');
+            const [assignments, setAssignments] = useState([]);
+
+            // working "add schedule" form
+            const [sPreset, setSPreset] = useState('eow');
+            const [sStart, setSStart] = useState(`${curYear}-01-01`);
+            const [sEnd, setSEnd] = useState(`${curYear}-12-31`);
+            const [sSecondary, setSSecondary] = useState('');
+            const [sP1, setSP1] = useState('');
+            const [sP2, setSP2] = useState('');
+            const [sEOWDay, setSEOWDay] = useState('fri');
+            const [sMidweek, setSMidweek] = useState(3);
+            const [sChildren, setSChildren] = useState([]);
+
+            useEffect(() => { setSChildren(dChildren); }, [dChildren]);
+            useEffect(() => {
+                if (dParents.length) { setSSecondary(dParents[1] || dParents[0]); setSP1(dParents[0]); setSP2(dParents[1] || dParents[0]); }
+            }, [dParents]);
+
+            const presetLabel = (p) => ({
+                'eow': 'Every other weekend (~80/20)',
+                'eow-midweek': 'EOW + midweek (~70/30)',
+                'joint-weekly': 'Alternating weeks (50/50)',
+                '2-2-3': '2-2-3 rotation (50/50)'
+            }[p] || p);
+
+            const addParentW = () => { const n = pName.trim(); if (n && !dParents.includes(n)) { setDParents([...dParents, n]); setPName(''); } };
+            const addChildW = () => { const n = cName.trim(); if (n && !dChildren.includes(n)) { setDChildren([...dChildren, n]); setCName(''); } };
+            const makePrimaryW = (p) => setDParents([p, ...dParents.filter(x => x !== p)]);
+            const toggleSChild = (c) => setSChildren(sChildren.includes(c) ? sChildren.filter(x => x !== c) : [...sChildren, c]);
+
+            const addAssignment = () => {
+                if (!sStart || !sEnd) { alert('Please set a date range.'); return; }
+                if (sChildren.length === 0) { alert('Select at least one child for this schedule.'); return; }
+                let extra;
+                if (sPreset === 'eow' || sPreset === 'eow-midweek') {
+                    if (!sSecondary) { alert('Select the parent who gets the weekends.'); return; }
+                    extra = { secondary: sSecondary };
+                } else {
+                    if (!sP1 || !sP2) { alert('Select both parents.'); return; }
+                    extra = { p1: sP1, p2: sP2 };
+                }
+                setAssignments([...assignments, { id: generateId(), preset: sPreset, start: sStart, end: sEnd, eowDay: sEOWDay, midweek: sMidweek, children: [...sChildren], ...extra }]);
+                setSChildren(dChildren);
+            };
+
+            const finish = () => {
+                const parentColors = {}; dParents.forEach(p => { parentColors[p] = nextColor(parentColors); });
+                const childColors = {}; dChildren.forEach(c => { childColors[c] = nextColor(childColors); });
+                let entries = [];
+                assignments.forEach(a => {
+                    let gen = [];
+                    if (a.preset === 'eow') gen = generateEOWSchedule(a.secondary, a.start, a.end, a.children, a.eowDay);
+                    else if (a.preset === 'eow-midweek') gen = generateEOWMidweek(a.secondary, a.start, a.end, a.children, a.eowDay, a.midweek);
+                    else if (a.preset === 'joint-weekly') gen = generateJointWeeklySchedule(a.p1, a.p2, a.start, a.end, a.children);
+                    else if (a.preset === '2-2-3') gen = generate223(a.p1, a.p2, a.start, a.end, a.children);
+                    entries = entries.concat(gen);
+                });
+                if (entries.length === 0) {
+                    const cp = {}; dChildren.forEach(c => { cp[c] = true; });
+                    entries = [{ id: generateId(), parent: '', beginDate: '', endDate: '', childrenPresent: cp, note: '' }];
+                }
+                onComplete({ parents: dParents, parentColors, children: dChildren, childColors, entries });
+            };
+
+            const canNext = step === 0 ? dParents.length >= 1 : step === 1 ? dChildren.length >= 1 : true;
+            const xBtn = { background: 'none', border: 'none', cursor: 'pointer', padding: '0 0.25rem', fontSize: '1.25rem' };
+
+            return (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '1rem' }}>
+                    <div className="card" style={{ maxWidth: 640, width: '100%', marginTop: '1.5rem' }}>
+                        {/* progress */}
+                        <div style={{ display: 'flex', gap: 6, marginBottom: '1.25rem' }}>
+                            {['Parents', 'Children', 'Schedules', 'Review'].map((label, i) => (
+                                <div key={label} style={{ flex: 1, textAlign: 'center' }}>
+                                    <div style={{ height: 6, borderRadius: 3, background: i <= step ? '#2563eb' : '#e5e7eb', marginBottom: 4 }} />
+                                    <span style={{ fontSize: '0.7rem', color: i === step ? '#111827' : '#9ca3af', fontWeight: i === step ? 700 : 400 }}>{label}</span>
+                                </div>
+                            ))}
+                        </div>
+
+                        {step === 0 && (
+                            <div>
+                                <h2 className="text-2xl font-bold mb-2">Who are the parents?</h2>
+                                <p className="text-sm text-gray-600 mb-4">Add each parent. The first one is the “primary” parent — the default custodian used for reporting. Tap ☆ to change who is primary.</p>
+                                <div className="config-list mb-2">
+                                    {dParents.map((p, i) => (
+                                        <div key={p} className="config-item">
+                                            <span>{p}{i === 0 ? ' (Primary)' : ''}</span>
+                                            {i !== 0 && <button onClick={() => makePrimaryW(p)} title="Make primary" style={{ ...xBtn, color: '#9ca3af', fontSize: '1rem' }}>☆</button>}
+                                            <button onClick={() => setDParents(dParents.filter(x => x !== p))} className="text-red" style={xBtn}>×</button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2">
+                                    <input className="form-input" value={pName} onChange={e => setPName(e.target.value)} onKeyPress={e => e.key === 'Enter' && addParentW()} placeholder="Parent name" autoComplete="off" />
+                                    <button className="btn btn-primary" onClick={addParentW}>Add</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {step === 1 && (
+                            <div>
+                                <h2 className="text-2xl font-bold mb-2">Who are the children?</h2>
+                                <p className="text-sm text-gray-600 mb-4">Add each child. In the next step you can give different children different schedules.</p>
+                                <div className="config-list mb-2">
+                                    {dChildren.map(c => (
+                                        <div key={c} className="config-item">
+                                            <span>{c}</span>
+                                            <button onClick={() => setDChildren(dChildren.filter(x => x !== c))} className="text-red" style={xBtn}>×</button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2">
+                                    <input className="form-input" value={cName} onChange={e => setCName(e.target.value)} onKeyPress={e => e.key === 'Enter' && addChildW()} placeholder="Child name" autoComplete="off" />
+                                    <button className="btn btn-primary" onClick={addChildW}>Add</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {step === 2 && (
+                            <div>
+                                <h2 className="text-2xl font-bold mb-2">Set up schedules</h2>
+                                <p className="text-sm text-gray-600 mb-4">Choose a schedule and which children it covers. If children have different arrangements, add more than one. You can also skip this and fill the calendar in by hand.</p>
+
+                                {assignments.length > 0 && (
+                                    <div className="mb-4">
+                                        {assignments.map(a => (
+                                            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#eff6ff', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: 6 }}>
+                                                <span style={{ fontSize: '0.85rem', color: '#1d4ed8' }}>
+                                                    <strong>{presetLabel(a.preset)}</strong> · {a.children.join(', ')} · {a.start} → {a.end}
+                                                </span>
+                                                <button onClick={() => setAssignments(assignments.filter(x => x.id !== a.id))} className="text-red" style={{ ...xBtn, fontSize: '1.1rem' }}>×</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div className="config-box">
+                                    <h4 className="font-semibold mb-2">Add a schedule</h4>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.75rem' }}>
+                                        {['eow', 'eow-midweek', 'joint-weekly', '2-2-3'].map(v => (
+                                            <label key={v} className="flex" style={{ alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                                                <input type="radio" value={v} checked={sPreset === v} onChange={e => setSPreset(e.target.value)} />
+                                                {presetLabel(v)}
+                                            </label>
+                                        ))}
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>Start Date</label>
+                                            <input type="date" value={sStart} onChange={e => setSStart(e.target.value)} className="form-input" />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>End Date</label>
+                                            <input type="date" value={sEnd} onChange={e => setSEnd(e.target.value)} className="form-input" />
+                                        </div>
+                                    </div>
+
+                                    {(sPreset === 'eow' || sPreset === 'eow-midweek') && (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                                            <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>Parent who gets the weekends</label>
+                                                <select value={sSecondary} onChange={e => setSSecondary(e.target.value)} className="form-input">
+                                                    {dParents.map(p => <option key={p} value={p}>{p}</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>Weekend Starts On</label>
+                                                <select value={sEOWDay} onChange={e => setSEOWDay(e.target.value)} className="form-input">
+                                                    <option value="fri">Friday</option>
+                                                    <option value="sat">Saturday</option>
+                                                </select>
+                                            </div>
+                                            {sPreset === 'eow-midweek' && (
+                                                <div>
+                                                    <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>Midweek Overnight</label>
+                                                    <select value={sMidweek} onChange={e => setSMidweek(parseInt(e.target.value))} className="form-input">
+                                                        <option value={1}>Monday</option>
+                                                        <option value={2}>Tuesday</option>
+                                                        <option value={3}>Wednesday</option>
+                                                        <option value={4}>Thursday</option>
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {(sPreset === 'joint-weekly' || sPreset === '2-2-3') && (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                                            <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>{sPreset === '2-2-3' ? 'First parent (starts cycle)' : 'Parent with Week 1'}</label>
+                                                <select value={sP1} onChange={e => setSP1(e.target.value)} className="form-input">
+                                                    {dParents.map(p => <option key={p} value={p}>{p}</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>{sPreset === '2-2-3' ? 'Second parent' : 'Parent with Week 2'}</label>
+                                                <select value={sP2} onChange={e => setSP2(e.target.value)} className="form-input">
+                                                    {dParents.map(p => <option key={p} value={p}>{p}</option>)}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <label className="text-sm font-medium text-gray-700 mb-2" style={{ display: 'block' }}>Applies to children</label>
+                                    <div className="flex flex-wrap gap-2 mb-4">
+                                        {dChildren.map(c => (
+                                            <label key={c} className="config-item" style={{ cursor: 'pointer' }}>
+                                                <input type="checkbox" checked={sChildren.includes(c)} onChange={() => toggleSChild(c)} /> {c}
+                                            </label>
+                                        ))}
+                                    </div>
+
+                                    <button className="btn btn-success" onClick={addAssignment}>+ Add this schedule</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {step === 3 && (
+                            <div>
+                                <h2 className="text-2xl font-bold mb-2">Review</h2>
+                                <p className="mb-2"><strong>Parents:</strong> {dParents.map((p, i) => p + (i === 0 ? ' (Primary)' : '')).join(', ') || '—'}</p>
+                                <p className="mb-2"><strong>Children:</strong> {dChildren.join(', ') || '—'}</p>
+                                <p className="mb-2"><strong>Schedules:</strong></p>
+                                {assignments.length === 0 ? (
+                                    <p className="text-sm text-gray-600">None — you'll start with a blank calendar to fill in manually.</p>
+                                ) : (
+                                    <ul style={{ marginTop: 0, paddingLeft: '1.2rem' }}>
+                                        {assignments.map(a => (
+                                            <li key={a.id} style={{ fontSize: '0.9rem', marginBottom: 4 }}>{presetLabel(a.preset)} for {a.children.join(', ')} ({a.start} → {a.end})</li>
+                                        ))}
+                                    </ul>
+                                )}
+                                <p className="text-sm text-gray-600 mt-4">Creating will set up your calendar. You can still edit everything afterward.</p>
+                            </div>
+                        )}
+
+                        {/* nav */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.5rem' }}>
+                            <button className="btn btn-secondary" onClick={step === 0 ? onCancel : () => setStep(step - 1)}>{step === 0 ? 'Cancel' : 'Back'}</button>
+                            {step < 3
+                                ? <button className="btn btn-primary" disabled={!canNext} style={{ opacity: canNext ? 1 : 0.5 }} onClick={() => setStep(step + 1)}>Next</button>
+                                : <button className="btn btn-success" onClick={finish}>Create Calendar</button>}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         function CustodyCalendarApp() {
             // Configuration state
             const [parents, setParents] = useState([]);
@@ -904,6 +1178,17 @@
             const [childColors, setChildColors] = useState({});
             const [editingColor, setEditingColor] = useState(null); // { type: 'parent'|'child', name }
             const [viewMode, setViewMode] = useState('list');
+            const [showWizard, setShowWizard] = useState(true);
+
+            const completeWizard = ({ parents: wp, parentColors: wpc, children: wc, childColors: wcc, entries: we }) => {
+                setParents(wp);
+                setParentColors(wpc);
+                setChildren(wc);
+                setChildColors(wcc);
+                setEntries(we);
+                setShowWizard(false);
+                setViewMode('calendar');
+            };
             const [showConfig, setShowConfig] = useState(true);
             const [showReporting, setShowReporting] = useState(false);
             const [newParentName, setNewParentName] = useState('');
@@ -1159,9 +1444,9 @@
                 }]);
             };
 
-            const createEntryFromCalendar = (start, end, parent) => {
+            const createEntryFromCalendar = (start, end, parent, childFilter) => {
                 const newChildrenPresent = {};
-                children.forEach(child => { newChildrenPresent[child] = true; });
+                children.forEach(child => { newChildrenPresent[child] = childFilter ? child === childFilter : true; });
                 setEntries([...entries, {
                     id: generateId(),
                     parent,
@@ -1558,6 +1843,7 @@
 
             return (
                 <div className="container">
+                    {showWizard && <SetupWizard onComplete={completeWizard} onCancel={() => setShowWizard(false)} />}
                     <div style={{
                         background: '#fef3c7',
                         border: '1px solid #f59e0b',
@@ -1594,7 +1880,7 @@
                     </div>
 
                     {viewMode === 'calendar' ? (
-                        <CalendarView entries={entries} parents={parents} parentColors={parentColors} onCreateEntry={createEntryFromCalendar} />
+                        <CalendarView entries={entries} parents={parents} parentColors={parentColors} children={children} childColors={childColors} onCreateEntry={createEntryFromCalendar} />
                     ) : (
                     <div className="card">
                         {/* Configuration Section */}
@@ -1743,6 +2029,7 @@
                         
                         {/* Header Actions */}
                         <div className="flex flex-wrap gap-3 mb-6">
+                            <button onClick={() => setShowWizard(true)} className="btn btn-secondary">🧭 Setup Wizard</button>
                             <button onClick={addRow} className="btn btn-primary">+ Row</button>
                             <button onClick={() => setShowScheduleGen(!showScheduleGen)} className="btn btn-primary">⚡ Generate Schedule</button>
                             <button onClick={clearAll} className="btn btn-danger">Clear</button>

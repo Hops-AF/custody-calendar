@@ -306,12 +306,6 @@
             return diffDays + 1;
         }
 
-        function nightsInclusive(start, end) {
-            const days = daysInclusive(start, end);
-            if (days === "") return "";
-            return Math.max(0, days - 1);
-        }
-
         function overlapDays(a0, a1, b0, b1) {
             const aStart = toDate(a0);
             const aEnd = toDate(a1);
@@ -338,7 +332,7 @@
         function formatDate(date) {
             if (!date) return '';
             const d = new Date(date);
-            return d.toISOString().split('T')[0];
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         }
 
         const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -359,21 +353,68 @@
             return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
         }
 
-        // Which parent has custody on the calendar day `dateStr`? An entry [begin,end]
-        // covers every day from begin to end inclusive. Days not covered by any entry
-        // are unassigned (shown gray on the calendar). When `childFilter` is set, only
-        // entries that include that child are considered.
-        function getDayOwner(dateStr, entries, childFilter) {
-            const owners = [];
-            for (const e of entries) {
-                if (!e.beginDate || !e.endDate || !e.parent) continue;
-                if (childFilter && !(e.childrenPresent && e.childrenPresent[childFilter])) continue;
-                if (dateStr >= e.beginDate && dateStr <= e.endDate) owners.push(e.parent);
+        function enumerateDates(start, end) {
+            const startDate = toDate(start);
+            const endDate = toDate(end);
+            if (!startDate || !endDate || endDate < startDate) return [];
+            const dates = [];
+            const cursor = new Date(startDate);
+            while (cursor <= endDate) {
+                dates.push(`${cursor.getFullYear()}-${pad2(cursor.getMonth() + 1)}-${pad2(cursor.getDate())}`);
+                cursor.setDate(cursor.getDate() + 1);
             }
-            const distinct = [...new Set(owners)];
-            if (distinct.length === 0) return { parent: null, conflict: false };
-            if (distinct.length === 1) return { parent: distinct[0], conflict: false };
-            return { parent: distinct[0], conflict: true };
+            return dates;
+        }
+
+        function getChildDayState(dateStr, entries, child) {
+            const owners = [...new Set(entries
+                .filter(entry => entry.parent && entry.beginDate && entry.endDate)
+                .filter(entry => dateStr >= entry.beginDate && dateStr <= entry.endDate)
+                .filter(entry => !child || (entry.childrenPresent && entry.childrenPresent[child]))
+                .map(entry => entry.parent))];
+            if (owners.length === 0) return { type: 'unassigned', child, parent: null, parents: [] };
+            if (owners.length === 1) return { type: 'single', child, parent: owners[0], parents: owners };
+            return { type: 'conflict', child, parent: null, parents: owners };
+        }
+
+        function getCalendarDayState(dateStr, entries, children, childFilter) {
+            const selectedChildren = childFilter ? [childFilter] : (children.length ? children : [null]);
+            const childStates = selectedChildren.map(child => getChildDayState(dateStr, entries, child));
+            if (childStates.some(state => state.type === 'conflict')) return { type: 'conflict', parent: null, childStates };
+            const assignedParents = [...new Set(childStates.filter(state => state.type === 'single').map(state => state.parent))];
+            const hasUnassigned = childStates.some(state => state.type === 'unassigned');
+            if (assignedParents.length === 0) return { type: 'unassigned', parent: null, childStates };
+            if (assignedParents.length === 1 && !hasUnassigned) return { type: 'single', parent: assignedParents[0], childStates };
+            return { type: 'split', parent: null, childStates };
+        }
+
+        function computeCustodySummary({ entries, parents, children, start, end, childFilter }) {
+            const dates = enumerateDates(start, end);
+            const selectedChildren = childFilter === 'all' ? children : [childFilter];
+            const primary = parents[0] || null;
+            const totals = {};
+            let conflictDays = 0;
+            let totalUnits = 0;
+            dates.forEach(dateStr => {
+                selectedChildren.forEach(child => {
+                    const state = getChildDayState(dateStr, entries, child);
+                    if (state.type === 'conflict') { conflictDays += 1; return; }
+                    const owner = state.type === 'single' ? state.parent : primary;
+                    if (!owner) return;
+                    totals[owner] = (totals[owner] || 0) + 1;
+                    totalUnits += 1;
+                });
+            });
+            const order = [...parents, ...Object.keys(totals).filter(parent => !parents.includes(parent))];
+            return {
+                rows: order.filter(parent => totals[parent]).map(parent => ({
+                    parent,
+                    custodyDays: totals[parent],
+                    percentage: totalUnits ? Number(((totals[parent] / totalUnits) * 100).toFixed(1)) : 0,
+                })),
+                conflictDays,
+                totalUnits,
+            };
         }
 
         const COLOR_CHOICES = [
@@ -404,6 +445,17 @@
             return COLOR_CHOICES.find(c => !used.includes(c)) || COLOR_CHOICES[Object.keys(overrides || {}).length % COLOR_CHOICES.length];
         }
 
+        const WEB_STORAGE_KEY = 'custody_calendar_v2';
+        function loadWebData() {
+            try {
+                const raw = localStorage.getItem(WEB_STORAGE_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch (error) {
+                console.warn('Could not load local custody data', error);
+                return null;
+            }
+        }
+
         function CalendarView({ entries, parents, parentColors, children, childColors, onCreateEntry }) {
             const now = new Date();
             const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -421,12 +473,12 @@
 
             const resetSelection = () => { setPendingStart(null); setHoverDay(null); setPendingRange(null); };
             const prevMonth = () => {
-                resetSelection();
+                setHoverDay(null);
                 if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
                 else setViewMonth(m => m - 1);
             };
             const nextMonth = () => {
-                resetSelection();
+                setHoverDay(null);
                 if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
                 else setViewMonth(m => m + 1);
             };
@@ -443,11 +495,15 @@
 
             const monthTally = {};
             let hasConflict = false;
+            let hasSplit = false;
             for (let day = 1; day <= daysInMonth; day++) {
                 const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
-                const owner = getDayOwner(ds, entries, childFilter);
-                if (owner.conflict) hasConflict = true;
-                if (owner.parent) monthTally[owner.parent] = (monthTally[owner.parent] || 0) + 1;
+                const state = getCalendarDayState(ds, entries, children, childFilter);
+                if (state.type === 'conflict') hasConflict = true;
+                if (state.type === 'split') hasSplit = true;
+                state.childStates.forEach(childState => {
+                    if (childState.type === 'single') monthTally[childState.parent] = (monthTally[childState.parent] || 0) + 1;
+                });
             }
 
             // Selection highlighting helpers
@@ -467,20 +523,30 @@
             for (let i = 0; i < firstDow; i++) cells.push(<div key={'b' + i} />);
             for (let day = 1; day <= daysInMonth; day++) {
                 const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
-                const owner = getDayOwner(ds, entries, childFilter);
-                const col = owner.parent ? colorFor(owner.parent) : null;
+                const state = getCalendarDayState(ds, entries, children, childFilter);
+                const col = state.type === 'single' ? colorFor(state.parent) : null;
+                const splitColors = state.type === 'split'
+                    ? state.childStates.map(childState => childState.parent ? colorFor(childState.parent) : '#e5e7eb')
+                    : [];
+                const splitBackground = splitColors.length
+                    ? `linear-gradient(90deg, ${splitColors.map((color, index) => `${color} ${(index / splitColors.length) * 100}%, ${color} ${((index + 1) / splitColors.length) * 100}%`).join(', ')})`
+                    : null;
                 const isToday = ds === todayStr;
                 const selEdge = isSelEdge(ds);
                 const selRange = inPendingRange(ds) || inPreview(ds);
                 let border = 'none';
                 if (selEdge) border = '3px solid #2563eb';
                 else if (selRange) border = '2px solid #93c5fd';
-                else if (owner.conflict) border = '2px dashed #dc2626';
+                else if (state.type === 'conflict') border = '2px dashed #dc2626';
                 cells.push(
                     <div
                         key={day}
                         onClick={() => handleDayClick(ds)}
                         onMouseEnter={() => { if (pendingStart) setHoverDay(ds); }}
+                        role="button"
+                        tabIndex="0"
+                        aria-label={`${fmtLong(ds)}${state.type === 'split' ? ', children have different schedules' : state.type === 'conflict' ? ', conflicting entries' : state.parent ? `, ${state.parent}` : ', unassigned'}`}
+                        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') handleDayClick(ds); }}
                         style={{
                             aspectRatio: '1 / 1',
                             display: 'flex',
@@ -488,7 +554,7 @@
                             justifyContent: 'center',
                             cursor: 'pointer',
                             borderRadius: '8px',
-                            background: col || '#e5e7eb',
+                            background: splitBackground || col || '#e5e7eb',
                             border,
                             boxSizing: 'border-box',
                             userSelect: 'none'
@@ -497,7 +563,8 @@
                         <span style={{
                             fontSize: '0.9rem',
                             fontWeight: isToday ? 800 : 600,
-                            color: col ? '#fff' : '#9ca3af',
+                            color: (col || splitBackground) ? '#fff' : '#9ca3af',
+                            textShadow: splitBackground ? '0 1px 2px rgba(0,0,0,0.65)' : 'none',
                             textDecoration: isToday ? 'underline' : 'none'
                         }}>{day}</span>
                     </div>
@@ -512,19 +579,19 @@
                 <div>
                     <div className="card">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                            <button onClick={prevMonth} className="btn btn-secondary">‹</button>
+                            <button onClick={prevMonth} className="btn btn-secondary" aria-label="Previous month">‹</button>
                             <span style={{ fontSize: '1.1rem', fontWeight: 700 }}>{MONTH_NAMES[viewMonth]} {viewYear}</span>
-                            <button onClick={nextMonth} className="btn btn-secondary">›</button>
+                            <button onClick={nextMonth} className="btn btn-secondary" aria-label="Next month">›</button>
                         </div>
                         <p style={{ fontSize: '0.8rem', color: '#2563eb', textAlign: 'center', marginBottom: '0.75rem' }}>{hint}</p>
                         {children && children.length > 1 && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center', marginBottom: '0.75rem' }}>
-                                <button onClick={() => setChildFilter(null)} className="btn btn-sm"
+                                <button onClick={() => setChildFilter(null)} className="btn btn-sm" aria-pressed={childFilter === null}
                                     style={{ background: childFilter === null ? '#111827' : '#e5e7eb', color: childFilter === null ? '#fff' : '#374151' }}>
                                     All children
                                 </button>
                                 {children.map(c => (
-                                    <button key={c} onClick={() => setChildFilter(c)} className="btn btn-sm"
+                                    <button key={c} onClick={() => setChildFilter(c)} className="btn btn-sm" aria-pressed={childFilter === c}
                                         style={{ background: childFilter === c ? colorForName(c, children, childColors) : '#e5e7eb', color: childFilter === c ? '#fff' : '#374151' }}>
                                         {c}
                                     </button>
@@ -545,7 +612,7 @@
                         <div className="config-box mb-6">
                             <h4 className="font-semibold mb-2">
                                 New custody period: {fmtLong(pendingRange.start)} – {fmtLong(pendingRange.end)}
-                                <span style={{ color: '#6b7280', fontWeight: 400 }}> · {daysInclusive(pendingRange.start, pendingRange.end)} days, {nightsInclusive(pendingRange.start, pendingRange.end)} nights</span>
+                                <span style={{ color: '#6b7280', fontWeight: 400 }}> · {daysInclusive(pendingRange.start, pendingRange.end)} custody day(s)</span>
                             </h4>
                             {parents.length === 0 ? (
                                 <p className="text-sm text-gray-600">Add parents in the Entries tab first, then you can assign custody.</p>
@@ -571,7 +638,7 @@
                     )}
 
                     <div className="card">
-                        <h4 className="font-medium text-gray-900 mb-2">Legend · days this month</h4>
+                        <h4 className="font-medium text-gray-900 mb-2">Legend · {!childFilter && children.length > 1 ? 'child-days' : 'custody days'} this month</h4>
                         {parents.length === 0 && (
                             <p className="text-sm text-gray-600">Add parents in the Entries tab to color the calendar.</p>
                         )}
@@ -581,7 +648,7 @@
                                 <div key={p} style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
                                     <span style={{ width: 16, height: 16, borderRadius: 4, background: col, marginRight: 10 }} />
                                     <span style={{ flex: 1, color: '#374151' }}>{p}{idx === 0 ? ' (Primary)' : ''}</span>
-                                    <span style={{ color: '#6b7280', fontWeight: 600 }}>{monthTally[p] || 0} days</span>
+                                    <span style={{ color: '#6b7280', fontWeight: 600 }}>{monthTally[p] || 0}</span>
                                 </div>
                             );
                         })}
@@ -590,10 +657,13 @@
                             <span style={{ flex: 1, color: '#374151' }}>No custody entry</span>
                         </div>
                         {hasConflict && (
-                            <p style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '0.5rem' }}>⚠ Some days have conflicting entries (outlined in red).</p>
+                            <p style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '0.5rem' }}>Some children are assigned to two parents on the same day (red outline).</p>
+                        )}
+                        {hasSplit && !childFilter && (
+                            <p style={{ fontSize: '0.8rem', color: '#4f46e5', marginTop: '0.5rem' }}>Split-color days mean the children have different schedules.</p>
                         )}
                         <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.6rem' }}>
-                            Each day is colored by the parent who has custody. Days with no custody entry are gray.
+                            Choose a child to see one schedule. Gray means no explicit entry; reporting credits unassigned days to the primary parent.
                         </p>
                     </div>
                 </div>
@@ -625,8 +695,8 @@
                         entries.push({
                             id: generateId(),
                             parent: secondaryParent,
-                            beginDate: actualStart.toISOString().split('T')[0],
-                            endDate: actualEnd.toISOString().split('T')[0],
+                            beginDate: formatDate(actualStart),
+                            endDate: formatDate(actualEnd),
                             childrenPresent: cp,
                             note: 'EOW'
                         });
@@ -660,8 +730,8 @@
                     entries.push({
                         id: generateId(),
                         parent,
-                        beginDate: actualStart.toISOString().split('T')[0],
-                        endDate: actualEnd.toISOString().split('T')[0],
+                        beginDate: formatDate(actualStart),
+                        endDate: formatDate(actualEnd),
                         childrenPresent: cp,
                         note: `Week ${weekNum + 1}`
                     });
@@ -913,14 +983,14 @@
             );
         }
 
-        function SetupWizard({ onComplete, onCancel }) {
+        function SetupWizard({ initialData, onComplete, onCancel }) {
             const curYear = new Date().getFullYear();
             const [step, setStep] = useState(0);
-            const [dParents, setDParents] = useState([]);
-            const [dChildren, setDChildren] = useState([]);
+            const [dParents, setDParents] = useState(initialData.parents || []);
+            const [dChildren, setDChildren] = useState(initialData.children || []);
             const [pName, setPName] = useState('');
             const [cName, setCName] = useState('');
-            const [assignments, setAssignments] = useState([]);
+            const [assignments, setAssignments] = useState(initialData.scheduleAssignments || []);
 
             // working "add schedule" form
             const [sPreset, setSPreset] = useState('eow');
@@ -933,9 +1003,18 @@
             const [sMidweek, setSMidweek] = useState(3);
             const [sChildren, setSChildren] = useState([]);
 
-            useEffect(() => { setSChildren(dChildren); }, [dChildren]);
             useEffect(() => {
-                if (dParents.length) { setSSecondary(dParents[1] || dParents[0]); setSP1(dParents[0]); setSP2(dParents[1] || dParents[0]); }
+                setSChildren(selected => selected.length ? selected.filter(child => dChildren.includes(child)) : dChildren);
+                setAssignments(current => current
+                    .map(assignment => ({ ...assignment, children: assignment.children.filter(child => dChildren.includes(child)) }))
+                    .filter(assignment => assignment.children.length));
+            }, [dChildren]);
+            useEffect(() => {
+                if (dParents.length) {
+                    setSSecondary(value => dParents.includes(value) && value !== dParents[0] ? value : (dParents[1] || ''));
+                    setSP1(value => dParents.includes(value) ? value : dParents[0]);
+                    setSP2(value => dParents.includes(value) && value !== dParents[0] ? value : (dParents[1] || ''));
+                }
             }, [dParents]);
 
             const presetLabel = (p) => ({
@@ -949,16 +1028,30 @@
             const addChildW = () => { const n = cName.trim(); if (n && !dChildren.includes(n)) { setDChildren([...dChildren, n]); setCName(''); } };
             const makePrimaryW = (p) => setDParents([p, ...dParents.filter(x => x !== p)]);
             const toggleSChild = (c) => setSChildren(sChildren.includes(c) ? sChildren.filter(x => x !== c) : [...sChildren, c]);
+            const assignmentIsValid = (assignment) => {
+                if (!assignment.start || !assignment.end || assignment.start > assignment.end || !assignment.children.length) return false;
+                if (assignment.preset === 'eow' || assignment.preset === 'eow-midweek') {
+                    return dParents.includes(assignment.secondary) && assignment.secondary !== dParents[0];
+                }
+                return dParents.includes(assignment.p1) && dParents.includes(assignment.p2) && assignment.p1 !== assignment.p2;
+            };
+
+            const assignmentError = (() => {
+                if (!sStart || !sEnd) return 'Set a start and end date.';
+                if (sStart > sEnd) return 'The end date must be on or after the start date.';
+                if (sChildren.length === 0) return 'Select at least one child.';
+                if (dParents.length < 2) return 'Add two parents before creating a shared schedule.';
+                if ((sPreset === 'eow' || sPreset === 'eow-midweek') && (!sSecondary || sSecondary === dParents[0])) return 'Choose a non-primary parent for weekends.';
+                if ((sPreset === 'joint-weekly' || sPreset === '2-2-3') && (!sP1 || !sP2 || sP1 === sP2)) return 'Choose two different parents.';
+                return '';
+            })();
 
             const addAssignment = () => {
-                if (!sStart || !sEnd) { alert('Please set a date range.'); return; }
-                if (sChildren.length === 0) { alert('Select at least one child for this schedule.'); return; }
+                if (assignmentError) return;
                 let extra;
                 if (sPreset === 'eow' || sPreset === 'eow-midweek') {
-                    if (!sSecondary) { alert('Select the parent who gets the weekends.'); return; }
                     extra = { secondary: sSecondary };
                 } else {
-                    if (!sP1 || !sP2) { alert('Select both parents.'); return; }
                     extra = { p1: sP1, p2: sP2 };
                 }
                 setAssignments([...assignments, { id: generateId(), preset: sPreset, start: sStart, end: sEnd, eowDay: sEOWDay, midweek: sMidweek, children: [...sChildren], ...extra }]);
@@ -966,22 +1059,35 @@
             };
 
             const finish = () => {
-                const parentColors = {}; dParents.forEach(p => { parentColors[p] = nextColor(parentColors); });
-                const childColors = {}; dChildren.forEach(c => { childColors[c] = nextColor(childColors); });
-                let entries = [];
+                if (assignments.some(assignment => !assignmentIsValid(assignment))) {
+                    alert('One or more schedules no longer match the selected parents or dates. Remove and recreate the highlighted schedule before continuing.');
+                    return;
+                }
+                const parentColors = {}; dParents.forEach(p => { parentColors[p] = initialData.parentColors?.[p] || nextColor(parentColors); });
+                const childColors = {}; dChildren.forEach(c => { childColors[c] = initialData.childColors?.[c] || nextColor(childColors); });
+                let generatedEntries = [];
                 assignments.forEach(a => {
                     let gen = [];
                     if (a.preset === 'eow') gen = generateEOWSchedule(a.secondary, a.start, a.end, a.children, a.eowDay);
                     else if (a.preset === 'eow-midweek') gen = generateEOWMidweek(a.secondary, a.start, a.end, a.children, a.eowDay, a.midweek);
                     else if (a.preset === 'joint-weekly') gen = generateJointWeeklySchedule(a.p1, a.p2, a.start, a.end, a.children);
                     else if (a.preset === '2-2-3') gen = generate223(a.p1, a.p2, a.start, a.end, a.children);
-                    entries = entries.concat(gen);
+                    generatedEntries = generatedEntries.concat(gen.map(entry => ({ ...entry, scheduleId: a.id })));
                 });
+                const manualEntries = (initialData.entries || [])
+                    .filter(entry => !entry.scheduleId)
+                    .filter(entry => entry.parent || entry.beginDate || entry.endDate || entry.note)
+                    .filter(entry => !entry.parent || dParents.includes(entry.parent))
+                    .map(entry => ({
+                        ...entry,
+                        childrenPresent: Object.fromEntries(dChildren.map(child => [child, Boolean(entry.childrenPresent?.[child])])),
+                    }));
+                let entries = [...manualEntries, ...generatedEntries];
                 if (entries.length === 0) {
                     const cp = {}; dChildren.forEach(c => { cp[c] = true; });
                     entries = [{ id: generateId(), parent: '', beginDate: '', endDate: '', childrenPresent: cp, note: '' }];
                 }
-                onComplete({ parents: dParents, parentColors, children: dChildren, childColors, entries });
+                onComplete({ parents: dParents, parentColors, children: dChildren, childColors, entries, scheduleAssignments: assignments });
             };
 
             const canNext = step === 0 ? dParents.length >= 1 : step === 1 ? dChildren.length >= 1 : true;
@@ -1008,13 +1114,13 @@
                                     {dParents.map((p, i) => (
                                         <div key={p} className="config-item">
                                             <span>{p}{i === 0 ? ' (Primary)' : ''}</span>
-                                            {i !== 0 && <button onClick={() => makePrimaryW(p)} title="Make primary" style={{ ...xBtn, color: '#9ca3af', fontSize: '1rem' }}>☆</button>}
-                                            <button onClick={() => setDParents(dParents.filter(x => x !== p))} className="text-red" style={xBtn}>×</button>
+                                            {i !== 0 && <button onClick={() => makePrimaryW(p)} title="Make primary" aria-label={`Make ${p} the primary parent`} style={{ ...xBtn, color: '#9ca3af', fontSize: '1rem' }}>☆</button>}
+                                            <button onClick={() => setDParents(dParents.filter(x => x !== p))} aria-label={`Remove ${p}`} className="text-red" style={xBtn}>×</button>
                                         </div>
                                     ))}
                                 </div>
                                 <div className="flex gap-2">
-                                    <input className="form-input" value={pName} onChange={e => setPName(e.target.value)} onKeyPress={e => e.key === 'Enter' && addParentW()} placeholder="Parent name" autoComplete="off" />
+                                    <input className="form-input" value={pName} onChange={e => setPName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addParentW()} placeholder="Parent name" autoComplete="off" />
                                     <button className="btn btn-primary" onClick={addParentW}>Add</button>
                                 </div>
                             </div>
@@ -1028,12 +1134,12 @@
                                     {dChildren.map(c => (
                                         <div key={c} className="config-item">
                                             <span>{c}</span>
-                                            <button onClick={() => setDChildren(dChildren.filter(x => x !== c))} className="text-red" style={xBtn}>×</button>
+                                            <button onClick={() => setDChildren(dChildren.filter(x => x !== c))} aria-label={`Remove ${c}`} className="text-red" style={xBtn}>×</button>
                                         </div>
                                     ))}
                                 </div>
                                 <div className="flex gap-2">
-                                    <input className="form-input" value={cName} onChange={e => setCName(e.target.value)} onKeyPress={e => e.key === 'Enter' && addChildW()} placeholder="Child name" autoComplete="off" />
+                                    <input className="form-input" value={cName} onChange={e => setCName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addChildW()} placeholder="Child name" autoComplete="off" />
                                     <button className="btn btn-primary" onClick={addChildW}>Add</button>
                                 </div>
                             </div>
@@ -1047,11 +1153,11 @@
                                 {assignments.length > 0 && (
                                     <div className="mb-4">
                                         {assignments.map(a => (
-                                            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#eff6ff', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: 6 }}>
-                                                <span style={{ fontSize: '0.85rem', color: '#1d4ed8' }}>
-                                                    <strong>{presetLabel(a.preset)}</strong> · {a.children.join(', ')} · {a.start} → {a.end}
+                                            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: assignmentIsValid(a) ? '#eff6ff' : '#fef2f2', border: assignmentIsValid(a) ? 'none' : '1px solid #fecaca', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: 6 }}>
+                                                <span style={{ fontSize: '0.85rem', color: assignmentIsValid(a) ? '#1d4ed8' : '#b91c1c' }}>
+                                                    <strong>{presetLabel(a.preset)}</strong> · {a.children.join(', ')} · {a.start} → {a.end}{assignmentIsValid(a) ? '' : ' · needs attention'}
                                                 </span>
-                                                <button onClick={() => setAssignments(assignments.filter(x => x.id !== a.id))} className="text-red" style={{ ...xBtn, fontSize: '1.1rem' }}>×</button>
+                                                <button onClick={() => setAssignments(assignments.filter(x => x.id !== a.id))} aria-label={`Remove ${presetLabel(a.preset)} schedule`} className="text-red" style={{ ...xBtn, fontSize: '1.1rem' }}>×</button>
                                             </div>
                                         ))}
                                     </div>
@@ -1134,7 +1240,8 @@
                                         ))}
                                     </div>
 
-                                    <button className="btn btn-success" onClick={addAssignment}>+ Add this schedule</button>
+                                    {assignmentError && <p style={{ color: '#b91c1c', fontSize: '0.8rem', marginBottom: '0.5rem' }}>{assignmentError}</p>}
+                                    <button className="btn btn-success" onClick={addAssignment} disabled={Boolean(assignmentError)} style={{ opacity: assignmentError ? 0.45 : 1 }}>+ Add this schedule</button>
                                 </div>
                             </div>
                         )}
@@ -1154,7 +1261,7 @@
                                         ))}
                                     </ul>
                                 )}
-                                <p className="text-sm text-gray-600 mt-4">Creating will set up your calendar. You can still edit everything afterward.</p>
+                                <p className="text-sm text-gray-600 mt-4">Manual entries are preserved. Recurring entries are regenerated from these saved schedule definitions.</p>
                             </div>
                         )}
 
@@ -1171,21 +1278,24 @@
         }
 
         function CustodyCalendarApp() {
+            const savedData = useRef(loadWebData()).current;
             // Configuration state
-            const [parents, setParents] = useState([]);
-            const [children, setChildren] = useState([]);
-            const [parentColors, setParentColors] = useState({});
-            const [childColors, setChildColors] = useState({});
+            const [parents, setParents] = useState(savedData?.parents || []);
+            const [children, setChildren] = useState(savedData?.children || []);
+            const [parentColors, setParentColors] = useState(savedData?.parentColors || {});
+            const [childColors, setChildColors] = useState(savedData?.childColors || {});
             const [editingColor, setEditingColor] = useState(null); // { type: 'parent'|'child', name }
-            const [viewMode, setViewMode] = useState('list');
-            const [showWizard, setShowWizard] = useState(true);
+            const [viewMode, setViewMode] = useState(savedData?.viewMode || 'calendar');
+            const [showWizard, setShowWizard] = useState(!savedData?.parents?.length);
+            const [scheduleAssignments, setScheduleAssignments] = useState(savedData?.scheduleAssignments || []);
 
-            const completeWizard = ({ parents: wp, parentColors: wpc, children: wc, childColors: wcc, entries: we }) => {
+            const completeWizard = ({ parents: wp, parentColors: wpc, children: wc, childColors: wcc, entries: we, scheduleAssignments: wa }) => {
                 setParents(wp);
                 setParentColors(wpc);
                 setChildren(wc);
                 setChildColors(wcc);
                 setEntries(we);
+                setScheduleAssignments(wa);
                 setShowWizard(false);
                 setViewMode('calendar');
             };
@@ -1194,7 +1304,7 @@
             const [newParentName, setNewParentName] = useState('');
             const [newChildName, setNewChildName] = useState('');
 
-            const [entries, setEntries] = useState([
+            const [entries, setEntries] = useState(savedData?.entries || [
                 {
                     id: generateId(),
                     parent: '',
@@ -1205,13 +1315,13 @@
                 }
             ]);
 
-            const [reportingMode, setReportingMode] = useState('custom');
-            const [customStart, setCustomStart] = useState('');
-            const [customEnd, setCustomEnd] = useState('');
-            const [quarterYear, setQuarterYear] = useState(new Date().getFullYear());
-            const [quarter, setQuarter] = useState('Q1');
-            const [preset, setPreset] = useState('year-to-date');
-            const [analysisChild, setAnalysisChild] = useState('all');
+            const [reportingMode, setReportingMode] = useState(savedData?.reportingMode || 'custom');
+            const [customStart, setCustomStart] = useState(savedData?.customStart || '');
+            const [customEnd, setCustomEnd] = useState(savedData?.customEnd || '');
+            const [quarterYear, setQuarterYear] = useState(savedData?.quarterYear || new Date().getFullYear());
+            const [quarter, setQuarter] = useState(savedData?.quarter || 'Q1');
+            const [preset, setPreset] = useState(savedData?.preset || 'year-to-date');
+            const [analysisChild, setAnalysisChild] = useState(savedData?.analysisChild || 'all');
 
             // Schedule generator state
             const [showScheduleGen, setShowScheduleGen] = useState(false);
@@ -1227,6 +1337,29 @@
             const currentYear = new Date().getFullYear();
             const today = new Date();
             const todayStr = formatDate(today);
+
+            useEffect(() => {
+                try {
+                    localStorage.setItem(WEB_STORAGE_KEY, JSON.stringify({
+                        parents,
+                        children,
+                        parentColors,
+                        childColors,
+                        entries,
+                        scheduleAssignments,
+                        reportingMode,
+                        customStart,
+                        customEnd,
+                        quarterYear,
+                        quarter,
+                        preset,
+                        analysisChild,
+                        viewMode,
+                    }));
+                } catch (error) {
+                    console.warn('Could not save local custody data', error);
+                }
+            }, [parents, children, parentColors, childColors, entries, scheduleAssignments, reportingMode, customStart, customEnd, quarterYear, quarter, preset, analysisChild, viewMode]);
 
             // Generate year options
             const yearOptions = [];
@@ -1337,95 +1470,27 @@
                 return { start, end };
             }, [reportingMode, customStart, customEnd, quarterYear, quarter, preset, currentYear, todayStr]);
 
-            // Calculate summary by parent for reporting window
-            const windowSummary = useMemo(() => {
-                if (!reportingWindow.start || !reportingWindow.end) return [];
-
-                const parentSummary = {};
-                
-                entries.forEach(entry => {
-                    if (!entry.beginDate || !entry.endDate) return;
-                    
-                    const days = overlapDays(entry.beginDate, entry.endDate, reportingWindow.start, reportingWindow.end);
-                    const nights = Math.max(0, days - 1);
-                    
-                    // Count child-nights based on analysis selection
-                    let childNights = 0;
-                    if (analysisChild === 'all') {
-                        // Count nights for all children present
-                        children.forEach(child => {
-                            if (entry.childrenPresent[child]) {
-                                childNights += nights;
-                            }
-                        });
-                    } else {
-                        // Count nights only for the selected child
-                        if (entry.childrenPresent[analysisChild]) {
-                            childNights = nights;
-                        }
-                    }
-                    
-                    if (!parentSummary[entry.parent]) {
-                        parentSummary[entry.parent] = { days: 0, nights: 0 };
-                    }
-                    
-                    parentSummary[entry.parent].days += days;
-                    parentSummary[entry.parent].nights += childNights;
-                });
-
-                // Primary parent gets all nights not explicitly covered by other entries.
-                // You only need to enter entries for non-primary custody periods;
-                // the primary parent's share is inferred as the remainder.
-                const primaryParent = parents[0];
-                if (reportingWindow.start && reportingWindow.end && primaryParent) {
-                    const windowDays = daysInclusive(reportingWindow.start, reportingWindow.end);
-                    const windowNights = windowDays !== "" ? Math.max(0, windowDays - 1) : 0;
-                    const totalPossibleNights = analysisChild === 'all'
-                        ? windowNights * children.length
-                        : windowNights;
-
-                    // Sum ALL explicitly entered nights across all parents
-                    const totalExplicitNights = Object.values(parentSummary).reduce((s, d) => s + d.nights, 0);
-
-                    // Gap nights default to primary
-                    const gapNights = Math.max(0, totalPossibleNights - totalExplicitNights);
-                    if (gapNights > 0) {
-                        if (!parentSummary[primaryParent]) {
-                            parentSummary[primaryParent] = { days: 0, nights: 0 };
-                        }
-                        parentSummary[primaryParent].nights += gapNights;
-                        parentSummary[primaryParent].days += gapNights;
-                    }
-                }
-
-                const totalNights = Object.values(parentSummary).reduce((sum, p) => sum + p.nights, 0);
-                
-                return Object.entries(parentSummary).map(([parent, data]) => ({
-                    parent,
-                    days: data.days,
-                    nights: data.nights,
-                    percentage: totalNights > 0 ? ((data.nights / totalNights) * 100).toFixed(1) : '0.0'
-                }));
-            }, [entries, reportingWindow, analysisChild, children, parents]);
-
-            const totalWindowNights = windowSummary.reduce((sum, p) => sum + p.nights, 0);
+            const summaryResult = useMemo(() => computeCustodySummary({
+                entries,
+                parents,
+                children,
+                start: reportingWindow.start,
+                end: reportingWindow.end,
+                childFilter: analysisChild,
+            }), [entries, reportingWindow, analysisChild, children, parents]);
+            const windowSummary = summaryResult.rows;
 
             // Calculate footer totals
             const footerTotals = useMemo(() => {
                 let totalDays = 0;
-                let totalNights = 0;
                 
                 entries.forEach(entry => {
                     const days = daysInclusive(entry.beginDate, entry.endDate);
-                    const nights = nightsInclusive(entry.beginDate, entry.endDate);
-                    
                     if (days !== "") {
                         totalDays += days;
-                        totalNights += nights;
                     }
                 });
-                
-                return { totalDays, totalNights };
+                return { totalDays };
             }, [entries]);
 
             const addRow = () => {
@@ -1505,38 +1570,49 @@
                         childrenPresent: newChildrenPresent,
                         note: ''
                     }]);
+                    setScheduleAssignments([]);
                 }
             };
 
             const resetAll = () => {
                 if (window.confirm('Reset all data? This erases all parents, children, colors, and entries and reopens the setup wizard. This cannot be undone.')) {
+                    localStorage.removeItem(WEB_STORAGE_KEY);
                     setParents([]);
                     setChildren([]);
                     setParentColors({});
                     setChildColors({});
                     setEntries([{ id: generateId(), parent: '', beginDate: '', endDate: '', childrenPresent: {}, note: '' }]);
+                    setScheduleAssignments([]);
                     setReportingMode('custom');
                     setCustomStart('');
                     setCustomEnd('');
                     setAnalysisChild('all');
-                    setViewMode('list');
+                    setViewMode('calendar');
                     setShowWizard(true);
                 }
             };
 
             const runScheduleGenerator = () => {
                 let newEntries = [];
+                if (!scheduleStart || !scheduleEnd || scheduleStart > scheduleEnd) {
+                    alert('Set an end date on or after the start date.');
+                    return;
+                }
+                if (parents.length < 2) {
+                    alert('Add two parents before generating a shared schedule.');
+                    return;
+                }
                 if (schedulePattern === 'eow' || schedulePattern === 'eow-midweek') {
-                    if (!scheduleSecondaryParent || !scheduleStart || !scheduleEnd) {
-                        alert('Please select a parent and set a date range.');
+                    if (!scheduleSecondaryParent || scheduleSecondaryParent === parents[0]) {
+                        alert('Choose a weekend parent who is different from the primary parent.');
                         return;
                     }
                     newEntries = schedulePattern === 'eow'
                         ? generateEOWSchedule(scheduleSecondaryParent, scheduleStart, scheduleEnd, children, scheduleEOWDay)
                         : generateEOWMidweek(scheduleSecondaryParent, scheduleStart, scheduleEnd, children, scheduleEOWDay, scheduleMidweekDow);
                 } else {
-                    if (!scheduleJointParent1 || !scheduleJointParent2 || !scheduleStart || !scheduleEnd) {
-                        alert('Please select both parents and set a date range.');
+                    if (!scheduleJointParent1 || !scheduleJointParent2 || scheduleJointParent1 === scheduleJointParent2) {
+                        alert('Choose two different parents.');
                         return;
                     }
                     newEntries = schedulePattern === '2-2-3'
@@ -1547,8 +1623,22 @@
                     alert('No entries generated. Check your date range.');
                     return;
                 }
+                const assignment = {
+                    id: generateId(),
+                    preset: schedulePattern,
+                    start: scheduleStart,
+                    end: scheduleEnd,
+                    children: [...children],
+                    eowDay: scheduleEOWDay,
+                    midweek: scheduleMidweekDow,
+                    ...(schedulePattern === 'eow' || schedulePattern === 'eow-midweek'
+                        ? { secondary: scheduleSecondaryParent }
+                        : { p1: scheduleJointParent1, p2: scheduleJointParent2 }),
+                };
+                const taggedEntries = newEntries.map(entry => ({ ...entry, scheduleId: assignment.id }));
                 const replace = window.confirm(`Generated ${newEntries.length} entries.\n\nOK = Replace all existing entries\nCancel = Add to existing entries`);
-                setEntries(replace ? newEntries : [...entries, ...newEntries]);
+                setEntries(replace ? taggedEntries : [...entries, ...taggedEntries]);
+                setScheduleAssignments(replace ? [assignment] : [...scheduleAssignments, assignment]);
                 setShowScheduleGen(false);
             };
 
@@ -1562,8 +1652,7 @@
                             'Parent': entry.parent,
                             'Begin Date': entry.beginDate,
                             'End Date': entry.endDate,
-                            'Duration (days)': daysInclusive(entry.beginDate, entry.endDate),
-                            'Duration (nights)': nightsInclusive(entry.beginDate, entry.endDate),
+                            'Custody Days': daysInclusive(entry.beginDate, entry.endDate),
                         };
                         
                         // Add each child as a column
@@ -1580,8 +1669,7 @@
                         { wch: 14 }, // Parent
                         { wch: 14 }, // Begin Date
                         { wch: 14 }, // End Date
-                        { wch: 16 }, // Duration (days)
-                        { wch: 18 }, // Duration (nights)
+                        { wch: 16 }, // Custody Days
                     ];
                     children.forEach(() => colWidths.push({ wch: 10 })); // Child columns
                     colWidths.push({ wch: 30 }); // Note
@@ -1596,11 +1684,10 @@
 
                     const summaryData = [
                         ['', '', '', ''],
-                        ['Parent', 'Days', 'Nights', '% Nights (of window total)'],
+                        ['Parent', 'Custody Days', '% Custody Days'],
                         ...windowSummary.map(item => [
                             item.parent,
-                            item.days,
-                            item.nights,
+                            item.custodyDays,
                             `${item.percentage}%`
                         ])
                     ];
@@ -1638,14 +1725,13 @@
             const exportToCSV = () => {
                 try {
                     // Prepare entries headers (dynamic based on children)
-                    const entriesHeaders = ['Parent', 'Begin Date', 'End Date', 'Duration (days)', 'Duration (nights)', ...children, 'Note'];
+                    const entriesHeaders = ['Parent', 'Begin Date', 'End Date', 'Custody Days', ...children, 'Note'];
                     const entriesRows = entries.map(entry => {
                         const row = [
                             entry.parent,
                             entry.beginDate,
                             entry.endDate,
                             daysInclusive(entry.beginDate, entry.endDate),
-                            nightsInclusive(entry.beginDate, entry.endDate),
                         ];
                         children.forEach(child => {
                             row.push(entry.childrenPresent[child] ? 'Yes' : 'No');
@@ -1660,11 +1746,10 @@
                         ? `Summary for ${reportingWindow.start} to ${reportingWindow.end} (${childAnalysisText})`
                         : '(no window set)';
 
-                    const summaryHeaders = ['Parent', 'Days', 'Nights', '% Nights (of window total)'];
+                    const summaryHeaders = ['Parent', 'Custody Days', '% Custody Days'];
                     const summaryRows = windowSummary.map(item => [
                         item.parent,
-                        item.days,
-                        item.nights,
+                        item.custodyDays,
                         `${item.percentage}%`
                     ]);
 
@@ -1859,10 +1944,16 @@
 
             return (
                 <div className="container">
-                    {showWizard && <SetupWizard onComplete={completeWizard} onCancel={() => setShowWizard(false)} />}
+                    {showWizard && (
+                        <SetupWizard
+                            initialData={{ parents, children, parentColors, childColors, entries, scheduleAssignments }}
+                            onComplete={completeWizard}
+                            onCancel={() => setShowWizard(false)}
+                        />
+                    )}
                     <div style={{
-                        background: '#fef3c7',
-                        border: '1px solid #f59e0b',
+                        background: '#ecfdf5',
+                        border: '1px solid #86efac',
                         borderRadius: '0.5rem',
                         padding: '0.75rem 1rem',
                         marginBottom: '1rem',
@@ -1870,9 +1961,9 @@
                         alignItems: 'flex-start',
                         gap: '0.6rem'
                     }}>
-                        <span style={{fontSize: '1.2rem', lineHeight: 1}}>⚠️</span>
-                        <div style={{fontSize: '0.875rem', color: '#92400e'}}>
-                            <strong>Data is not saved automatically.</strong> This is a self-contained webpage — all data lives only in your browser session and will be permanently lost if you refresh or close this tab. <strong>Export your data before refreshing.</strong>
+                        <span style={{fontSize: '1.2rem', lineHeight: 1, color: '#15803d'}}>✓</span>
+                        <div style={{fontSize: '0.875rem', color: '#166534'}}>
+                            <strong>Saved locally in this browser.</strong> Your data now survives refreshes on this device. Browser data can still be cleared, so export a backup periodically.
                         </div>
                     </div>
                     <div className="card">
@@ -1934,6 +2025,7 @@
                                                     <button
                                                         onClick={() => setEditingColor(editingColor && editingColor.type === 'parent' && editingColor.name === parent ? null : { type: 'parent', name: parent })}
                                                         title="Change color"
+                                                        aria-label={`Change color for ${parent}`}
                                                         style={{ width: 18, height: 18, borderRadius: 4, border: '1px solid #d1d5db', background: colorForName(parent, parents, parentColors), cursor: 'pointer', padding: 0 }}
                                                     />
                                                     <span>{parent}{index === 0 ? ' (Primary)' : ''}</span>
@@ -1941,6 +2033,7 @@
                                                         <button
                                                             onClick={() => setPrimary(parent)}
                                                             title="Make primary"
+                                                            aria-label={`Make ${parent} the primary parent`}
                                                             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 0.25rem', fontSize: '1rem', color: '#9ca3af' }}
                                                         >
                                                             ☆
@@ -1949,6 +2042,7 @@
                                                     <button
                                                         onClick={() => removeParent(parent)}
                                                         disabled={parents.length === 1}
+                                                        aria-label={`Remove ${parent}`}
                                                         className="text-red"
                                                         style={{
                                                             background: 'none',
@@ -1977,7 +2071,7 @@
                                                 type="text"
                                                 value={newParentName}
                                                 onChange={(e) => setNewParentName(e.target.value)}
-                                                onKeyPress={(e) => e.key === 'Enter' && addParent()}
+                                                onKeyDown={(e) => e.key === 'Enter' && addParent()}
                                                 placeholder="New parent name"
                                                 className="form-input"
                                             />
@@ -1996,12 +2090,14 @@
                                                     <button
                                                         onClick={() => setEditingColor(editingColor && editingColor.type === 'child' && editingColor.name === child ? null : { type: 'child', name: child })}
                                                         title="Change color"
+                                                        aria-label={`Change color for ${child}`}
                                                         style={{ width: 18, height: 18, borderRadius: 4, border: '1px solid #d1d5db', background: colorForName(child, children, childColors), cursor: 'pointer', padding: 0 }}
                                                     />
                                                     <span>{child}</span>
                                                     <button
                                                         onClick={() => removeChild(child)}
                                                         disabled={children.length === 1}
+                                                        aria-label={`Remove ${child}`}
                                                         className="text-red"
                                                         style={{
                                                             background: 'none',
@@ -2030,7 +2126,7 @@
                                                 type="text"
                                                 value={newChildName}
                                                 onChange={(e) => setNewChildName(e.target.value)}
-                                                onKeyPress={(e) => e.key === 'Enter' && addChild()}
+                                                onKeyDown={(e) => e.key === 'Enter' && addChild()}
                                                 placeholder="New child name"
                                                 className="form-input"
                                             />
@@ -2042,16 +2138,18 @@
                                 </div>
                             )}
                             {showConfig && (
-                                <button onClick={resetAll} className="btn btn-danger" style={{ marginTop: '1rem' }}>Reset all data</button>
+                                <div className="flex gap-2" style={{ marginTop: '1rem' }}>
+                                    <button onClick={clearAll} className="btn btn-danger">Clear entries</button>
+                                    <button onClick={resetAll} className="btn btn-danger">Reset all data</button>
+                                </div>
                             )}
                         </div>
 
                         {/* Header Actions */}
                         <div className="flex flex-wrap gap-3 mb-6">
-                            <button onClick={() => setShowWizard(true)} className="btn btn-secondary">🧭 Setup Wizard</button>
+                            <button onClick={() => setShowWizard(true)} className="btn btn-secondary">Edit household</button>
                             <button onClick={addRow} className="btn btn-primary">+ Row</button>
                             <button onClick={() => setShowScheduleGen(!showScheduleGen)} className="btn btn-primary">⚡ Generate Schedule</button>
-                            <button onClick={clearAll} className="btn btn-danger">Clear</button>
                             <button onClick={exportToExcel} className="btn btn-success">Export to Excel</button>
                             <button onClick={exportToCSV} className="btn btn-success">Export to CSV</button>
                             <div className="flex items-center">
@@ -2295,8 +2393,11 @@
                                 <strong>Analysis:</strong> {analysisChild === 'all' ? 'All Children' : `${analysisChild} Only`}
                             </div>
                             <div className="text-sm text-gray-600">
-                                <strong>Total nights in window:</strong> {totalWindowNights}
+                                <strong>{analysisChild === 'all' ? 'Counted child-days' : 'Counted custody days'}:</strong> {summaryResult.totalUnits}
                             </div>
+                            {summaryResult.conflictDays > 0 && (
+                                <p style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '0.5rem' }}>{summaryResult.conflictDays} conflicting child-day(s) excluded from this report.</p>
+                            )}
 
                             {/* Summary by Parent */}
                             {windowSummary.length > 0 && (
@@ -2307,17 +2408,15 @@
                                             <thead>
                                                 <tr>
                                                     <th>Parent</th>
-                                                    <th>Days</th>
-                                                    <th>Nights</th>
-                                                    <th>% Nights</th>
+                                                    <th>Custody days</th>
+                                                    <th>Share</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {windowSummary.map((item, index) => (
                                                     <tr key={index}>
                                                         <td>{item.parent}</td>
-                                                        <td>{item.days}</td>
-                                                        <td>{item.nights}</td>
+                                                        <td>{item.custodyDays}</td>
                                                         <td>{item.percentage}%</td>
                                                     </tr>
                                                 ))}
@@ -2336,8 +2435,7 @@
                                     <tr>
                                         <th>Parent</th>
                                         <th>Date Range</th>
-                                        <th>Days</th>
-                                        <th>Nights</th>
+                                        <th>Custody days</th>
                                         {children.map(child => (
                                             <th key={child}>{child}</th>
                                         ))}
@@ -2348,7 +2446,6 @@
                                 <tbody>
                                     {entries.map((entry) => {
                                         const days = daysInclusive(entry.beginDate, entry.endDate);
-                                        const nights = nightsInclusive(entry.beginDate, entry.endDate);
                                         const isInvalid = entry.beginDate && entry.endDate && days === "";
 
                                         return (
@@ -2378,15 +2475,13 @@
                                                 <td className={isInvalid ? 'text-red' : ''}>
                                                     {days}
                                                 </td>
-                                                <td className={isInvalid ? 'text-red' : ''}>
-                                                    {nights}
-                                                </td>
                                                 {children.map(child => (
                                                     <td key={child}>
                                                         <input
                                                             type="checkbox"
                                                             checked={entry.childrenPresent[child] || false}
                                                             onChange={(e) => updateChildPresent(entry.id, child, e.target.checked)}
+                                                            aria-label={`${child} is included in this entry`}
                                                             className="w-5 h-5 checkbox"
                                                         />
                                                     </td>
@@ -2426,8 +2521,7 @@
                         {/* Footer Totals */}
                         <div className="mt-6" style={{padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '0.5rem'}}>
                             <div className="flex" style={{justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem'}}>
-                                <span className="font-semibold">Total Days: {footerTotals.totalDays}</span>
-                                <span className="font-semibold">Total Nights: {footerTotals.totalNights}</span>
+                                <span className="font-semibold">Entered custody days: {footerTotals.totalDays}</span>
                             </div>
                         </div>
 

@@ -367,25 +367,30 @@
         }
 
         function getChildDayState(dateStr, entries, child) {
-            const owners = [...new Set(entries
+            const covering = entries
                 .filter(entry => entry.parent && entry.beginDate && entry.endDate)
                 .filter(entry => dateStr >= entry.beginDate && dateStr <= entry.endDate)
-                .filter(entry => !child || (entry.childrenPresent && entry.childrenPresent[child]))
-                .map(entry => entry.parent))];
-            if (owners.length === 0) return { type: 'unassigned', child, parent: null, parents: [] };
-            if (owners.length === 1) return { type: 'single', child, parent: owners[0], parents: owners };
-            return { type: 'conflict', child, parent: null, parents: owners };
+                .filter(entry => !child || (entry.childrenPresent && entry.childrenPresent[child]));
+            // Holiday/exception entries override the recurring schedule.
+            const exceptions = covering.filter(entry => entry.isException);
+            const pool = exceptions.length ? exceptions : covering;
+            const isException = exceptions.length > 0;
+            const owners = [...new Set(pool.map(entry => entry.parent))];
+            if (owners.length === 0) return { type: 'unassigned', child, parent: null, parents: [], isException: false };
+            if (owners.length === 1) return { type: 'single', child, parent: owners[0], parents: owners, isException };
+            return { type: 'conflict', child, parent: null, parents: owners, isException };
         }
 
         function getCalendarDayState(dateStr, entries, children, childFilter) {
             const selectedChildren = childFilter ? [childFilter] : (children.length ? children : [null]);
             const childStates = selectedChildren.map(child => getChildDayState(dateStr, entries, child));
-            if (childStates.some(state => state.type === 'conflict')) return { type: 'conflict', parent: null, childStates };
+            const isException = childStates.some(state => state.isException);
+            if (childStates.some(state => state.type === 'conflict')) return { type: 'conflict', parent: null, childStates, isException };
             const assignedParents = [...new Set(childStates.filter(state => state.type === 'single').map(state => state.parent))];
             const hasUnassigned = childStates.some(state => state.type === 'unassigned');
-            if (assignedParents.length === 0) return { type: 'unassigned', parent: null, childStates };
-            if (assignedParents.length === 1 && !hasUnassigned) return { type: 'single', parent: assignedParents[0], childStates };
-            return { type: 'split', parent: null, childStates };
+            if (assignedParents.length === 0) return { type: 'unassigned', parent: null, childStates, isException };
+            if (assignedParents.length === 1 && !hasUnassigned) return { type: 'single', parent: assignedParents[0], childStates, isException };
+            return { type: 'split', parent: null, childStates, isException };
         }
 
         function computeCustodySummary({ entries, parents, children, start, end, childFilter }) {
@@ -464,6 +469,8 @@
             const [hoverDay, setHoverDay] = useState(null);
             const [pendingRange, setPendingRange] = useState(null); // {start, end} awaiting parent
             const [childFilter, setChildFilter] = useState(null); // null = all children
+            const [pendingHoliday, setPendingHoliday] = useState(false);
+            const [pendingHolidayName, setPendingHolidayName] = useState('');
 
             const todayStr = localTodayStr();
             const colorFor = (parent) => colorForName(parent, parents, parentColors);
@@ -471,7 +478,7 @@
             const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
             const firstDow = new Date(viewYear, viewMonth, 1).getDay();
 
-            const resetSelection = () => { setPendingStart(null); setHoverDay(null); setPendingRange(null); };
+            const resetSelection = () => { setPendingStart(null); setHoverDay(null); setPendingRange(null); setPendingHoliday(false); setPendingHolidayName(''); };
             const prevMonth = () => {
                 setHoverDay(null);
                 if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
@@ -496,11 +503,13 @@
             const monthTally = {};
             let hasConflict = false;
             let hasSplit = false;
+            let hasHoliday = false;
             for (let day = 1; day <= daysInMonth; day++) {
                 const ds = `${viewYear}-${pad2(viewMonth + 1)}-${pad2(day)}`;
                 const state = getCalendarDayState(ds, entries, children, childFilter);
                 if (state.type === 'conflict') hasConflict = true;
                 if (state.type === 'split') hasSplit = true;
+                if (state.isException) hasHoliday = true;
                 state.childStates.forEach(childState => {
                     if (childState.type === 'single') monthTally[childState.parent] = (monthTally[childState.parent] || 0) + 1;
                 });
@@ -545,9 +554,10 @@
                         onMouseEnter={() => { if (pendingStart) setHoverDay(ds); }}
                         role="button"
                         tabIndex="0"
-                        aria-label={`${fmtLong(ds)}${state.type === 'split' ? ', children have different schedules' : state.type === 'conflict' ? ', conflicting entries' : state.parent ? `, ${state.parent}` : ', unassigned'}`}
+                        aria-label={`${fmtLong(ds)}${state.isException ? ', holiday' : ''}${state.type === 'split' ? ', children have different schedules' : state.type === 'conflict' ? ', conflicting entries' : state.parent ? `, ${state.parent}` : ', unassigned'}`}
                         onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') handleDayClick(ds); }}
                         style={{
+                            position: 'relative',
                             aspectRatio: '1 / 1',
                             display: 'flex',
                             alignItems: 'center',
@@ -560,6 +570,7 @@
                             userSelect: 'none'
                         }}
                     >
+                        {state.isException && <span style={{ position: 'absolute', top: 0, right: 2, fontSize: '0.6rem' }}>🎁</span>}
                         <span style={{
                             fontSize: '0.9rem',
                             fontWeight: isToday ? 800 : 600,
@@ -618,6 +629,14 @@
                                 <p className="text-sm text-gray-600">Add parents in the Entries tab first, then you can assign custody.</p>
                             ) : (
                                 <div>
+                                    <label className="flex" style={{ alignItems: 'center', gap: '0.5rem', cursor: 'pointer', marginBottom: '0.5rem' }}>
+                                        <input type="checkbox" checked={pendingHoliday} onChange={e => setPendingHoliday(e.target.checked)} />
+                                        🎁 Holiday / exception (overrides the schedule)
+                                    </label>
+                                    {pendingHoliday && (
+                                        <input type="text" className="form-input mb-2" value={pendingHolidayName}
+                                            onChange={e => setPendingHolidayName(e.target.value)} placeholder="Holiday name (e.g. Christmas)" />
+                                    )}
                                     <p className="text-sm text-gray-700 mb-2">Assign to:</p>
                                     <div className="flex flex-wrap gap-2">
                                         {parents.map((p, idx) => {
@@ -625,7 +644,7 @@
                                             return (
                                                 <button key={p} className="btn"
                                                     style={{ background: col, color: '#fff' }}
-                                                    onClick={() => { onCreateEntry(pendingRange.start, pendingRange.end, p, childFilter); resetSelection(); }}>
+                                                    onClick={() => { onCreateEntry(pendingRange.start, pendingRange.end, p, childFilter, pendingHoliday, pendingHolidayName); resetSelection(); }}>
                                                     {p}{idx === 0 ? ' (Primary)' : ''}
                                                 </button>
                                             );
@@ -661,6 +680,9 @@
                         )}
                         {hasSplit && !childFilter && (
                             <p style={{ fontSize: '0.8rem', color: '#4f46e5', marginTop: '0.5rem' }}>Split-color days mean the children have different schedules.</p>
+                        )}
+                        {hasHoliday && (
+                            <p style={{ fontSize: '0.8rem', color: '#b45309', marginTop: '0.5rem' }}>🎁 marks a holiday/exception that overrides the recurring schedule.</p>
                         )}
                         <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.6rem' }}>
                             Choose a child to see one schedule. Gray means no explicit entry; reporting credits unassigned days to the primary parent.
@@ -1509,7 +1531,7 @@
                 }]);
             };
 
-            const createEntryFromCalendar = (start, end, parent, childFilter) => {
+            const createEntryFromCalendar = (start, end, parent, childFilter, isException, name) => {
                 const newChildrenPresent = {};
                 children.forEach(child => { newChildrenPresent[child] = childFilter ? child === childFilter : true; });
                 setEntries([...entries, {
@@ -1518,7 +1540,8 @@
                     beginDate: start,
                     endDate: end,
                     childrenPresent: newChildrenPresent,
-                    note: ''
+                    note: name || '',
+                    isException: Boolean(isException)
                 }]);
             };
 
@@ -1653,13 +1676,14 @@
                             'Begin Date': entry.beginDate,
                             'End Date': entry.endDate,
                             'Custody Days': daysInclusive(entry.beginDate, entry.endDate),
+                            'Type': entry.isException ? 'Holiday' : 'Schedule',
                         };
-                        
+
                         // Add each child as a column
                         children.forEach(child => {
                             row[child] = entry.childrenPresent[child] ? 'Yes' : 'No';
                         });
-                        
+
                         row['Note'] = entry.note;
                         return row;
                     });
@@ -1725,13 +1749,14 @@
             const exportToCSV = () => {
                 try {
                     // Prepare entries headers (dynamic based on children)
-                    const entriesHeaders = ['Parent', 'Begin Date', 'End Date', 'Custody Days', ...children, 'Note'];
+                    const entriesHeaders = ['Parent', 'Begin Date', 'End Date', 'Custody Days', 'Type', ...children, 'Note'];
                     const entriesRows = entries.map(entry => {
                         const row = [
                             entry.parent,
                             entry.beginDate,
                             entry.endDate,
                             daysInclusive(entry.beginDate, entry.endDate),
+                            entry.isException ? 'Holiday' : 'Schedule',
                         ];
                         children.forEach(child => {
                             row.push(entry.childrenPresent[child] ? 'Yes' : 'No');
@@ -1827,7 +1852,7 @@
                     const firstRow = jsonData[0];
                     const detectedChildren = [];
                     Object.keys(firstRow).forEach(key => {
-                        if (!['Parent', 'Begin Date', 'End Date', 'Duration (days)', 'Duration (nights)', 'Note', 'Notes'].includes(key) &&
+                        if (!['Parent', 'Begin Date', 'End Date', 'Custody Days', 'Duration (days)', 'Duration (nights)', 'Type', 'Note', 'Notes'].includes(key) &&
                             key.trim() !== '') {
                             detectedChildren.push(key);
                         }
@@ -1848,7 +1873,9 @@
                         const beginDate = getColumnValue(row, ['Begin Date', 'Begin', 'Start Date', 'Start']);
                         const endDate = getColumnValue(row, ['End Date', 'End']);
                         const note = getColumnValue(row, ['Note', 'Notes', 'note', 'notes']) || '';
-                        
+                        const typeValue = getColumnValue(row, ['Type', 'type']);
+                        const isException = String(typeValue).toLowerCase() === 'holiday';
+
                         // Build childrenPresent object
                         const childrenPresent = {};
                         detectedChildren.forEach(child => {
@@ -1891,7 +1918,8 @@
                             beginDate: formatExcelDate(beginDate),
                             endDate: formatExcelDate(endDate),
                             childrenPresent: childrenPresent,
-                            note: String(note)
+                            note: String(note),
+                            isException: isException
                         };
                     }).filter(entry => 
                         entry.parent && (entry.beginDate || entry.endDate)
@@ -2439,6 +2467,7 @@
                                         {children.map(child => (
                                             <th key={child}>{child}</th>
                                         ))}
+                                        <th title="Holiday / exception (overrides schedule)">🎁</th>
                                         <th>Note</th>
                                         <th>Action</th>
                                     </tr>
@@ -2486,6 +2515,15 @@
                                                         />
                                                     </td>
                                                 ))}
+                                                <td>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={Boolean(entry.isException)}
+                                                        onChange={(e) => updateEntry(entry.id, 'isException', e.target.checked)}
+                                                        aria-label="Holiday / exception overrides the schedule"
+                                                        className="w-5 h-5 checkbox"
+                                                    />
+                                                </td>
                                                 <td>
                                                     <input
                                                         type="text"

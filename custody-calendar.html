@@ -366,6 +366,14 @@
             return dates;
         }
 
+        // Where the child stays for this entry: an entry-level override wins,
+        // otherwise the parent's default home address.
+        function resolveLocation(entry, parentLocations) {
+            if (!entry) return '';
+            if (entry.location) return entry.location;
+            return (parentLocations && parentLocations[entry.parent]) || '';
+        }
+
         function getChildDayState(dateStr, entries, child) {
             const covering = entries
                 .filter(entry => entry.parent && entry.beginDate && entry.endDate)
@@ -1306,6 +1314,8 @@
             const [children, setChildren] = useState(savedData?.children || []);
             const [parentColors, setParentColors] = useState(savedData?.parentColors || {});
             const [childColors, setChildColors] = useState(savedData?.childColors || {});
+            const [parentLocations, setParentLocations] = useState(savedData?.parentLocations || {}); // parent -> home address
+            const [parentPhones, setParentPhones] = useState(savedData?.parentPhones || {});          // parent -> contact number
             const [editingColor, setEditingColor] = useState(null); // { type: 'parent'|'child', name }
             const [viewMode, setViewMode] = useState(savedData?.viewMode || 'calendar');
             const [showWizard, setShowWizard] = useState(!savedData?.parents?.length);
@@ -1367,6 +1377,8 @@
                         children,
                         parentColors,
                         childColors,
+                        parentLocations,
+                        parentPhones,
                         entries,
                         scheduleAssignments,
                         reportingMode,
@@ -1381,7 +1393,7 @@
                 } catch (error) {
                     console.warn('Could not save local custody data', error);
                 }
-            }, [parents, children, parentColors, childColors, entries, scheduleAssignments, reportingMode, customStart, customEnd, quarterYear, quarter, preset, analysisChild, viewMode]);
+            }, [parents, children, parentColors, childColors, parentLocations, parentPhones, entries, scheduleAssignments, reportingMode, customStart, customEnd, quarterYear, quarter, preset, analysisChild, viewMode]);
 
             // Generate year options
             const yearOptions = [];
@@ -1403,6 +1415,8 @@
                 if (parents.length > 1 && window.confirm(`Remove parent "${parent}"? This cannot be undone.`)) {
                     setParents(parents.filter(p => p !== parent));
                     const nc = { ...parentColors }; delete nc[parent]; setParentColors(nc);
+                    const nl = { ...parentLocations }; delete nl[parent]; setParentLocations(nl);
+                    const np = { ...parentPhones }; delete np[parent]; setParentPhones(np);
                 }
             };
 
@@ -1604,6 +1618,8 @@
                     setChildren([]);
                     setParentColors({});
                     setChildColors({});
+                    setParentLocations({});
+                    setParentPhones({});
                     setEntries([{ id: generateId(), parent: '', beginDate: '', endDate: '', childrenPresent: {}, note: '' }]);
                     setScheduleAssignments([]);
                     setReportingMode('custom');
@@ -1677,6 +1693,9 @@
                             'End Date': entry.endDate,
                             'Custody Days': daysInclusive(entry.beginDate, entry.endDate),
                             'Type': entry.isException ? 'Holiday' : 'Schedule',
+                            'Where': resolveLocation(entry, parentLocations),
+                            'Exchange Time': entry.exchangeTime || '',
+                            'Exchange Place': entry.exchangePlace || '',
                         };
 
                         // Add each child as a column
@@ -1694,6 +1713,10 @@
                         { wch: 14 }, // Begin Date
                         { wch: 14 }, // End Date
                         { wch: 16 }, // Custody Days
+                        { wch: 10 }, // Type
+                        { wch: 28 }, // Where
+                        { wch: 14 }, // Exchange Time
+                        { wch: 18 }, // Exchange Place
                     ];
                     children.forEach(() => colWidths.push({ wch: 10 })); // Child columns
                     colWidths.push({ wch: 30 }); // Note
@@ -1749,7 +1772,7 @@
             const exportToCSV = () => {
                 try {
                     // Prepare entries headers (dynamic based on children)
-                    const entriesHeaders = ['Parent', 'Begin Date', 'End Date', 'Custody Days', 'Type', ...children, 'Note'];
+                    const entriesHeaders = ['Parent', 'Begin Date', 'End Date', 'Custody Days', 'Type', 'Where', 'Exchange Time', 'Exchange Place', ...children, 'Note'];
                     const entriesRows = entries.map(entry => {
                         const row = [
                             entry.parent,
@@ -1757,6 +1780,9 @@
                             entry.endDate,
                             daysInclusive(entry.beginDate, entry.endDate),
                             entry.isException ? 'Holiday' : 'Schedule',
+                            resolveLocation(entry, parentLocations),
+                            entry.exchangeTime || '',
+                            entry.exchangePlace || '',
                         ];
                         children.forEach(child => {
                             row.push(entry.childrenPresent[child] ? 'Yes' : 'No');
@@ -1852,7 +1878,7 @@
                     const firstRow = jsonData[0];
                     const detectedChildren = [];
                     Object.keys(firstRow).forEach(key => {
-                        if (!['Parent', 'Begin Date', 'End Date', 'Custody Days', 'Duration (days)', 'Duration (nights)', 'Type', 'Note', 'Notes'].includes(key) &&
+                        if (!['Parent', 'Begin Date', 'End Date', 'Custody Days', 'Duration (days)', 'Duration (nights)', 'Type', 'Where', 'Exchange Time', 'Exchange Place', 'Note', 'Notes'].includes(key) &&
                             key.trim() !== '') {
                             detectedChildren.push(key);
                         }
@@ -1875,6 +1901,9 @@
                         const note = getColumnValue(row, ['Note', 'Notes', 'note', 'notes']) || '';
                         const typeValue = getColumnValue(row, ['Type', 'type']);
                         const isException = String(typeValue).toLowerCase() === 'holiday';
+                        const location = getColumnValue(row, ['Where', 'Location', 'where', 'location']) || '';
+                        const exchangeTime = getColumnValue(row, ['Exchange Time', 'exchange time']) || '';
+                        const exchangePlace = getColumnValue(row, ['Exchange Place', 'exchange place']) || '';
 
                         // Build childrenPresent object
                         const childrenPresent = {};
@@ -1919,7 +1948,10 @@
                             endDate: formatExcelDate(endDate),
                             childrenPresent: childrenPresent,
                             note: String(note),
-                            isException: isException
+                            isException: isException,
+                            location: String(location),
+                            exchangeTime: String(exchangeTime),
+                            exchangePlace: String(exchangePlace)
                         };
                     }).filter(entry => 
                         entry.parent && (entry.beginDate || entry.endDate)
@@ -2107,8 +2139,34 @@
                                                 Add
                                             </button>
                                         </div>
+
+                                        {/* Home & contact — default location for each parent's days */}
+                                        {parents.length > 0 && (
+                                            <div style={{ marginTop: '1rem' }}>
+                                                <h5 className="font-medium text-gray-900 mb-2">Home &amp; contact</h5>
+                                                <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 0, marginBottom: '0.5rem' }}>
+                                                    Used as the default place for each parent's days, so the kids know where they'll be.
+                                                </p>
+                                                {parents.map(p => (
+                                                    <div key={p} style={{ background: '#f9fafb', borderRadius: 8, padding: '0.6rem', marginBottom: '0.5rem' }}>
+                                                        <div className="flex" style={{ alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
+                                                            <span style={{ width: 14, height: 14, borderRadius: 4, background: colorForName(p, parents, parentColors) }} />
+                                                            <strong style={{ fontSize: '0.9rem' }}>{p}</strong>
+                                                        </div>
+                                                        <input type="text" className="form-input mb-2"
+                                                            value={parentLocations[p] || ''}
+                                                            onChange={(e) => setParentLocations({ ...parentLocations, [p]: e.target.value })}
+                                                            placeholder="Home address" aria-label={`Home address for ${p}`} />
+                                                        <input type="text" className="form-input"
+                                                            value={parentPhones[p] || ''}
+                                                            onChange={(e) => setParentPhones({ ...parentPhones, [p]: e.target.value })}
+                                                            placeholder="Phone (optional)" aria-label={`Phone for ${p}`} />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
-                                    
+
                                     {/* Children Configuration */}
                                     <div>
                                         <h4 className="font-medium text-gray-900 mb-2">Children</h4>
@@ -2468,6 +2526,8 @@
                                             <th key={child}>{child}</th>
                                         ))}
                                         <th title="Holiday / exception (overrides schedule)">🎁</th>
+                                        <th>Where</th>
+                                        <th>Exchange</th>
                                         <th>Note</th>
                                         <th>Action</th>
                                     </tr>
@@ -2523,6 +2583,36 @@
                                                         aria-label="Holiday / exception overrides the schedule"
                                                         className="w-5 h-5 checkbox"
                                                     />
+                                                </td>
+                                                <td style={{minWidth: '150px'}}>
+                                                    <input
+                                                        type="text"
+                                                        value={entry.location || ''}
+                                                        onChange={(e) => updateEntry(entry.id, 'location', e.target.value)}
+                                                        className="form-input"
+                                                        placeholder={entry.parent && parentLocations[entry.parent] ? parentLocations[entry.parent] : "Parent's home"}
+                                                        aria-label="Where the child stays"
+                                                    />
+                                                </td>
+                                                <td style={{minWidth: '170px'}}>
+                                                    <div className="flex gap-2">
+                                                        <input
+                                                            type="text"
+                                                            value={entry.exchangeTime || ''}
+                                                            onChange={(e) => updateEntry(entry.id, 'exchangeTime', e.target.value)}
+                                                            className="form-input"
+                                                            placeholder="6:00 PM"
+                                                            aria-label="Exchange time"
+                                                        />
+                                                        <input
+                                                            type="text"
+                                                            value={entry.exchangePlace || ''}
+                                                            onChange={(e) => updateEntry(entry.id, 'exchangePlace', e.target.value)}
+                                                            className="form-input"
+                                                            placeholder="School"
+                                                            aria-label="Exchange place"
+                                                        />
+                                                    </div>
                                                 </td>
                                                 <td>
                                                     <input

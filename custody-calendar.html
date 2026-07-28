@@ -538,6 +538,129 @@
             return lines.map(foldICSLine).join('\r\n') + '\r\n';
         }
 
+        // ── Kid view ─────────────────────────────────────────────────────────
+
+        // Answers "where am I today, and when do I switch?" for one child.
+        function getKidView({ entries, parents, children, child, today, daysAhead = 14 }) {
+            const startDate = toDate(today);
+            if (!startDate) return { current: null, next: null, daysUntilChange: null, upcoming: [] };
+            const endDate = new Date(startDate);
+            endDate.setDate(endDate.getDate() + daysAhead);
+            const end = `${endDate.getFullYear()}-${pad2(endDate.getMonth() + 1)}-${pad2(endDate.getDate())}`;
+
+            const blocks = buildCustodyBlocks({
+                entries, parents, children, start: today, end, childFilter: child || 'all',
+            });
+            const current = blocks.find(b => today >= b.start && today <= b.end) || null;
+            const next = blocks.find(b => b.start > today) || null;
+            const daysUntilChange = next
+                ? Math.round((toDate(next.start) - startDate) / 86400000)
+                : null;
+            return { current, next, daysUntilChange, upcoming: blocks };
+        }
+
+        function KidView({ entries, parents, parentColors, parentLocations, parentPhones, children, childColors }) {
+            const [child, setChild] = useState(children[0] || null);
+            const today = localTodayStr();
+            const activeChild = children.includes(child) ? child : (children[0] || null);
+            const view = getKidView({ entries, parents, children, child: activeChild, today, daysAhead: 14 });
+            const colorFor = (parent) => colorForName(parent, parents, parentColors);
+
+            const weekday = (ds) => { const d = toDate(ds); return d ? d.toLocaleDateString('en-US', { weekday: 'long' }) : ''; };
+            const shortDate = (ds) => { const d = toDate(ds); return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''; };
+            const countdown = (n) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`);
+
+            if (parents.length === 0) {
+                return (
+                    <div className="card">
+                        <p className="text-gray-600">Add parents and a schedule first, then this view will show where you are.</p>
+                    </div>
+                );
+            }
+
+            const currentColor = view.current ? colorFor(view.current.parent) : '#9ca3af';
+            const currentLocation = view.current
+                ? (resolveLocation(view.current.entry, parentLocations) || (parentLocations && parentLocations[view.current.parent]) || '')
+                : '';
+            const currentPhone = view.current ? ((parentPhones && parentPhones[view.current.parent]) || '') : '';
+
+            return (
+                <div>
+                    {children.length > 1 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center', marginBottom: '0.75rem' }}>
+                            {children.map(c => (
+                                <button key={c} onClick={() => setChild(c)} className="btn btn-sm"
+                                    style={{
+                                        background: c === activeChild ? colorForName(c, children, childColors) : '#e5e7eb',
+                                        color: c === activeChild ? '#fff' : '#374151'
+                                    }}>{c}</button>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Today */}
+                    <div style={{ background: currentColor, borderRadius: 16, padding: '1.4rem', marginBottom: '0.75rem', color: '#fff' }}>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.1em', opacity: 0.85 }}>TODAY</div>
+                        <div style={{ fontSize: '1.75rem', fontWeight: 800, marginTop: '0.2rem' }}>
+                            {view.current ? `You're with ${view.current.parent}` : 'No schedule for today'}
+                        </div>
+                        {view.current && view.current.isException && view.current.entry && view.current.entry.note && (
+                            <div style={{ marginTop: '0.4rem', fontSize: '0.95rem' }}>🎁 {view.current.entry.note}</div>
+                        )}
+                        {currentLocation && <div style={{ marginTop: '0.3rem', fontSize: '0.95rem' }}>📍 {currentLocation}</div>}
+                        {currentPhone && <div style={{ marginTop: '0.3rem', fontSize: '0.95rem' }}>📞 {currentPhone}</div>}
+                        {view.current && (
+                            <div style={{ marginTop: '0.3rem', fontSize: '0.95rem' }}>
+                                Until {weekday(view.current.end)}, {shortDate(view.current.end)}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Next switch */}
+                    <div className="card">
+                        <h4 className="font-medium text-gray-900 mb-2">Next switch</h4>
+                        {view.next ? (
+                            <div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>
+                                    You go to <span style={{ color: colorFor(view.next.parent), fontWeight: 800 }}>{view.next.parent}</span>
+                                </div>
+                                <div style={{ color: '#374151', marginTop: '0.2rem' }}>
+                                    {weekday(view.next.start)}, {shortDate(view.next.start)} · {countdown(view.daysUntilChange)}
+                                </div>
+                                {view.next.entry && view.next.entry.exchangeTime && (
+                                    <div style={{ color: '#4b5563', marginTop: '0.4rem' }}>🕕 {view.next.entry.exchangeTime}</div>
+                                )}
+                                {view.next.entry && view.next.entry.exchangePlace && (
+                                    <div style={{ color: '#4b5563', marginTop: '0.3rem' }}>🚗 Meet at {view.next.entry.exchangePlace}</div>
+                                )}
+                            </div>
+                        ) : (
+                            <p className="text-gray-600">No switch in the next two weeks.</p>
+                        )}
+                    </div>
+
+                    {/* Next two weeks */}
+                    <div className="card">
+                        <h4 className="font-medium text-gray-900 mb-2">Next two weeks</h4>
+                        {view.upcoming.length === 0 && <p className="text-gray-600">Nothing scheduled yet.</p>}
+                        {view.upcoming.map((b, i) => (
+                            <div key={`${b.parent}-${b.start}-${i}`} style={{ display: 'flex', alignItems: 'center', padding: '0.45rem 0' }}>
+                                <span style={{ width: 6, height: 34, borderRadius: 3, background: colorFor(b.parent), marginRight: 12 }} />
+                                <div>
+                                    <div style={{ fontWeight: 600, color: '#111827' }}>{b.parent}{b.isException ? ' 🎁' : ''}</div>
+                                    <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                        {b.start === b.end
+                                            ? `${weekday(b.start)}, ${shortDate(b.start)}`
+                                            : `${shortDate(b.start)} – ${shortDate(b.end)}`}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
         const COLOR_CHOICES = [
             '#2563eb', // blue
             '#16a34a', // green
@@ -2190,7 +2313,7 @@
 
                         {/* View toggle */}
                         <div style={{display: 'flex', background: '#e5e7eb', borderRadius: '10px', padding: '3px'}}>
-                            {[{id: 'list', label: 'Entries'}, {id: 'calendar', label: 'Calendar'}].map(m => (
+                            {[{id: 'list', label: 'Entries'}, {id: 'calendar', label: 'Calendar'}, {id: 'kid', label: 'Kid View'}].map(m => (
                                 <button key={m.id} onClick={() => setViewMode(m.id)} style={{
                                     flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', cursor: 'pointer',
                                     fontSize: '0.9rem',
@@ -2203,7 +2326,11 @@
                         </div>
                     </div>
 
-                    {viewMode === 'calendar' ? (
+                    {viewMode === 'kid' ? (
+                        <KidView entries={entries} parents={parents} parentColors={parentColors}
+                            parentLocations={parentLocations} parentPhones={parentPhones}
+                            children={children} childColors={childColors} />
+                    ) : viewMode === 'calendar' ? (
                         <CalendarView entries={entries} parents={parents} parentColors={parentColors} children={children} childColors={childColors} onCreateEntry={createEntryFromCalendar} />
                     ) : (
                     <div className="card">
